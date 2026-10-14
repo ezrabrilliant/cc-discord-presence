@@ -103,7 +103,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines. Key points:
 ## Important Notes
 
 - Polls every 3 seconds + uses file watcher
-- Discord must be running for RPC to connect
+- Discord must be running for RPC to connect; the daemon connects whenever Discord starts, reconnects after it restarts, and then sends the current activity again
 - Graceful shutdown on SIGINT/SIGTERM
 - Shows nudge message when using JSONL fallback
 - Tokens shown are context size (the last request's input, cached tokens included), not a session total

@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/tsanva/cc-discord-presence/discord"
 )
 
 // TestCalculateCost tests the cost calculation logic
@@ -701,5 +703,20 @@ func TestSetupLogWithoutFlagKeepsOutput(t *testing.T) {
 	}
 	if os.Stdout != origOut {
 		t.Error("setupLog without --log replaced os.Stdout")
+	}
+}
+
+// While Discord is away the client keeps the activity and sends it once it
+// reconnects, so the daemon must not retry (and log an error) every poll.
+func TestUpdatePresenceWhileDiscordIsAway(t *testing.T) {
+	origClient, origLast := discordClient, lastPresence
+	defer func() { discordClient, lastPresence = origClient, origLast }()
+	discordClient = discord.NewClient("test") // never connected
+	lastPresence = ""
+
+	updatePresence(&SessionData{ProjectName: "kadens", ModelName: "Opus 5.5", StartTime: time.Now()})
+
+	if lastPresence == "" {
+		t.Error("activity not recorded as handed over; every poll would resend it and log an error")
 	}
 }

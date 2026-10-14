@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -154,15 +155,13 @@ func main() {
 ║     Show your Claude Code session on Discord!             ║
 ╚═══════════════════════════════════════════════════════════╝`)
 
-	// Connect to Discord
+	// Connect to Discord, now or whenever it starts, and again after it
+	// restarts
 	fmt.Println("🔗 Connecting to Discord...")
 	discordClient = discord.NewClient(ClientID)
-	if err := discordClient.Connect(); err != nil {
-		fmt.Fprintf(os.Stderr, "❌ Failed to connect to Discord: %v\n", err)
-		fmt.Fprintln(os.Stderr, "   Make sure Discord is running and try again.")
-		os.Exit(1)
-	}
-	fmt.Println("✓ Discord RPC connected!")
+	discordClient.KeepConnected(PollInterval, func(format string, args ...any) {
+		fmt.Printf(format+"\n", args...)
+	})
 
 	// Setup graceful shutdown
 	sigChan := make(chan os.Signal, 1)
@@ -508,10 +507,11 @@ func updatePresence(session *SessionData) {
 		State:     state,
 		LargeText: "Clawd Code - Discord Rich Presence for Claude Code",
 		StartTime: &session.StartTime,
-	}); err != nil {
+	}); err != nil && !errors.Is(err, discord.ErrNotConnected) {
 		fmt.Fprintf(os.Stderr, "Error updating presence: %v\n", err)
 		return
 	}
+	// Sent, or kept by the client until Discord is back
 	lastPresence = key
 }
 
