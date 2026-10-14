@@ -70,14 +70,12 @@ cc-discord-presence/
 - **Windows**: One marker per session id in `~/.claude/discord-presence-sessions/`, read from the hook input (PPID unreliable on Windows). SessionStart runs again after `/compact` for the same id, so markers can't drift the way a refcount did. A marker whose transcript hasn't changed for 12 hours is dropped (a crashed session never runs SessionEnd)
 
 ### Model Pricing (Update when new models release)
-Located at top of `main.go` in `modelPricing` and `modelDisplayNames` maps.
+Located at top of `main.go` in `modelPrices`, keyed by display name ("Opus 4.5"), which `formatModelName` derives from any model ID (including Bedrock and Vertex AI forms). Prices come from https://platform.claude.com/docs/en/about-claude/pricing.
 
-| Model | Input $/1M | Output $/1M |
-|-------|-----------|-------------|
-| Opus 4.5 | $15 | $75 |
-| Sonnet 4.5 | $3 | $15 |
-| Sonnet 4 | $3 | $15 |
-| Haiku 4.5 | $1 | $5 |
+- Only the JSONL fallback uses it; the hooks module and statusline report Claude Code's own cost
+- Each response is priced by its own model: input, 5-minute (1.25x) and 1-hour (2x) cache writes, cache reads (per-model multiplier), output, plus fast mode, US-only inference (1.1x on 4.6+) and Haiku 5.5's long-prompt prices
+- Claude Code writes one JSONL line per content block, each repeating the response's usage: count each `message.id` once
+- A model missing from the table leaves the cost off the card instead of guessing
 
 ## Development Commands
 

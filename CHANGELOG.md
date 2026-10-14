@@ -20,6 +20,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - The daemon exited when Discord wasn't running at startup, and never reconnected after losing the connection
   - It now retries every 3 seconds, notices a closed connection even while the card text stays the same, and sends the current activity again after reconnecting
 - The JSONL fallback reads past transcript lines longer than 1 MB (large tool results); it stopped at the first one, so the card showed the model and token count from before it
+- The JSONL fallback's model name and cost were wrong for most sessions
+  - Models were looked up by exact ID in a table of four (one with an ID that doesn't exist), so current models showed as "Opus" and were priced as Sonnet 4; names now come from the model ID ("Opus 5.5"), Bedrock and Vertex AI forms included
+  - Prices are the current list prices, including cache writes (5-minute and 1-hour) and reads, which were ignored, fast mode and US-only inference; each response is priced by its own model
+  - Each response was counted once per content block, since Claude Code writes a line per block with the same usage
+  - A model without a known price leaves the cost off the card instead of guessing
+  - Claude Code's `<synthetic>` notices (API errors, interruptions) no longer replace the model and token count with "Claude" and 0
 
 ## [1.0.6] - 2026-10-12
 
