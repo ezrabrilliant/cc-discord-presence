@@ -843,3 +843,51 @@ func TestSessionIsIdleWithoutActivityTime(t *testing.T) {
 		t.Error("a session with no known activity time was hidden as idle")
 	}
 }
+
+// The elapsed timer showed how long the daemon had run, which is shared by
+// every session and survives none of them.
+func TestReadPresenceFileStartsTimerAtSessionStart(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "module.json")
+	os.WriteFile(path, []byte(`{"session_id":"s1","cwd":"/work/kadens","cost":{"total_duration_ms":7200000}}`), 0644)
+	written := time.Now().Add(-time.Minute).Truncate(time.Second)
+	os.Chtimes(path, written, written)
+
+	got := readPresenceFile(path)
+
+	if want := written.Add(-2 * time.Hour); got == nil || !got.StartTime.Equal(want) {
+		t.Errorf("StartTime = %v, want %v (written 2h into the session)", got.StartTime, want)
+	}
+}
+
+func transcriptLine(typ string, at time.Time) string {
+	return `{"type":"` + typ + `","cwd":"/work/kadens","timestamp":"` + at.UTC().Format(time.RFC3339Nano) + `",` +
+		`"message":{"id":"m` + at.Format("150405") + `","model":"claude-opus-5-5","usage":{"input_tokens":1}}}`
+}
+
+func TestParseJSONLSessionStartsTimerAtFirstMessage(t *testing.T) {
+	start := time.Date(2026, 10, 14, 9, 0, 0, 0, time.UTC)
+	path := writeTranscript(t,
+		transcriptLine("user", start),
+		transcriptLine("assistant", start.Add(5*time.Minute)),
+		transcriptLine("assistant", start.Add(5*time.Minute+IdleTimeout-time.Second))) // a gap just inside
+
+	if got := parseJSONLSession(path, ""); !got.StartTime.Equal(start) {
+		t.Errorf("StartTime = %v, want the first message at %v", got.StartTime, start)
+	}
+}
+
+// A session resumed after a break (the next morning, after lunch) starts a
+// new stretch of work rather than showing "20:00:00 elapsed".
+func TestParseJSONLSessionRestartsTimerAfterIdleGap(t *testing.T) {
+	start := time.Date(2026, 10, 14, 9, 0, 0, 0, time.UTC)
+	resumed := start.Add(IdleTimeout + time.Hour)
+	path := writeTranscript(t,
+		transcriptLine("user", start),
+		transcriptLine("assistant", start.Add(5*time.Minute)),
+		transcriptLine("user", resumed),
+		transcriptLine("assistant", resumed.Add(2*time.Minute)))
+
+	if got := parseJSONLSession(path, ""); !got.StartTime.Equal(resumed) {
+		t.Errorf("StartTime = %v, want the resumed stretch at %v", got.StartTime, resumed)
+	}
+}

@@ -345,6 +345,12 @@ func readPresenceFile(path string) *SessionData {
 		projectName = "Unknown Project"
 	}
 
+	// The file records how long the session had run when it was written
+	startTime := sessionStartTime
+	if ms := statusLine.Cost.TotalDurationMS; ms > 0 {
+		startTime = info.ModTime().Add(-time.Duration(ms) * time.Millisecond).Truncate(time.Second)
+	}
+
 	return &SessionData{
 		ProjectName: projectName,
 		ProjectPath: projectPath,
@@ -354,7 +360,7 @@ func readPresenceFile(path string) *SessionData {
 		TotalTokens: statusLine.ContextWindow.TotalInputTokens,
 		TotalCost:   statusLine.Cost.TotalCostUSD,
 		CostKnown:   true, // Claude Code's own figure
-		StartTime:   sessionStartTime,
+		StartTime:   startTime,
 
 		LastActivity: info.ModTime(),
 	}
@@ -475,9 +481,11 @@ func parseJSONLSession(jsonlPath, _ string) *SessionData {
 		usage Usage
 	}
 	var (
-		responses   []response         // in transcript order, one per message id
-		seen        = map[string]int{} // message id -> index in responses
-		projectPath string
+		responses    []response         // in transcript order, one per message id
+		seen         = map[string]int{} // message id -> index in responses
+		projectPath  string
+		stretchStart time.Time // first message of the current stretch of work
+		lastAt       time.Time
 	)
 
 	// Lines can be megabytes long (large tool results). A bufio.Scanner stops
@@ -496,6 +504,15 @@ func parseJSONLSession(jsonlPath, _ string) *SessionData {
 		// Extract cwd from any message that has it (usually first message)
 		if msg.Cwd != "" && projectPath == "" {
 			projectPath = msg.Cwd
+		}
+
+		// The timer counts from the start of the current stretch of work: a
+		// gap longer than IdleTimeout (a session resumed later) starts anew.
+		if at, err := time.Parse(time.RFC3339Nano, msg.Timestamp); err == nil {
+			if stretchStart.IsZero() || at.Sub(lastAt) > IdleTimeout {
+				stretchStart = at
+			}
+			lastAt = at
 		}
 
 		// Only process assistant messages with usage data. Claude Code
@@ -539,8 +556,12 @@ func parseJSONLSession(jsonlPath, _ string) *SessionData {
 		projectName = "Unknown Project"
 	}
 
-	// Use daemon start time for elapsed time display
-	// This shows how long Discord presence has been active, not total session time
+	// Transcripts without timestamps fall back to the daemon's start
+	startTime := sessionStartTime
+	if !stretchStart.IsZero() {
+		startTime = stretchStart
+	}
+
 	return &SessionData{
 		ProjectName: projectName,
 		ProjectPath: projectPath,
@@ -549,7 +570,7 @@ func parseJSONLSession(jsonlPath, _ string) *SessionData {
 		TotalTokens: contextTokens,
 		TotalCost:   totalCost,
 		CostKnown:   costKnown,
-		StartTime:   sessionStartTime,
+		StartTime:   startTime,
 
 		LastActivity: info.ModTime(),
 	}

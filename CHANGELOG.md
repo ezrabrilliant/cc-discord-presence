@@ -27,6 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - A model without a known price leaves the cost off the card instead of guessing
   - Claude Code's `<synthetic>` notices (API errors, interruptions) no longer replace the model and token count with "Claude" and 0
 - The card is cleared when there is no session to show, or the session has been idle for 15 minutes (a crashed session, a window left open); previously it kept showing the last session for as long as the daemon ran
+- The elapsed timer counts from the start of the session, not of the daemon, which every session shares; from the JSONL fallback it counts from the first message after the last break of more than 15 minutes, so a resumed session doesn't show a day-long timer
 
 ## [1.0.6] - 2026-10-12
 
