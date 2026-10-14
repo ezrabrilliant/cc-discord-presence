@@ -12,6 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - A pid reused after the daemon exited (reboot, Discord not running) made `start.sh` report the daemon as running without starting it, and `stop.sh` force-stop the unrelated program
 - On Windows the daemon's output now reaches `~/.claude/discord-presence.log`, which the README points to; `start.sh` discarded it, so a failed Discord connection left no trace
   - The daemon writes the file itself (`--log <path>`): redirecting through `Start-Process` would make it inherit the hook's output pipe, and Claude Code would wait on the SessionStart hook until its timeout
+- On Windows the daemon kept running, and Discord kept showing the card, after every Claude Code session had closed
+  - SessionStart runs again after `/compact` (manual or automatic) with no SessionEnd to match, so the session refcount never got back to zero; a crashed session or a closed window did the same
+  - Sessions are now tracked with one marker per session id from the hook input, in `~/.claude/discord-presence-sessions/`, replacing `discord-presence.refcount`; a marker whose transcript hasn't changed for 12 hours is dropped
 
 ## [1.0.6] - 2026-10-12
 

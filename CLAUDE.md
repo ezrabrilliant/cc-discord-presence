@@ -67,7 +67,7 @@ cc-discord-presence/
 
 ### Session Tracking (Platform-specific)
 - **macOS/Linux**: PID-based tracking via files in `~/.claude/discord-presence-sessions/`
-- **Windows**: Refcount-based tracking via `~/.claude/discord-presence.refcount` (PPID unreliable on Windows)
+- **Windows**: One marker per session id in `~/.claude/discord-presence-sessions/`, read from the hook input (PPID unreliable on Windows). SessionStart runs again after `/compact` for the same id, so markers can't drift the way a refcount did. A marker whose transcript hasn't changed for 12 hours is dropped (a crashed session never runs SessionEnd)
 
 ### Model Pricing (Update when new models release)
 Located at top of `main.go` in `modelPricing` and `modelDisplayNames` maps.

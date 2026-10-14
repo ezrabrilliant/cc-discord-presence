@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -204,6 +205,91 @@ func copyFile(t *testing.T, src, dst string) {
 func killPid(pid int) {
 	if p, err := os.FindProcess(pid); err == nil {
 		p.Kill()
+	}
+}
+
+// hookInput is the JSON Claude Code sends a SessionStart/SessionEnd hook.
+func hookInput(t *testing.T, sessionID, transcript string) string {
+	t.Helper()
+	data, err := json.Marshal(map[string]string{"session_id": sessionID, "transcript_path": transcript})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
+}
+
+// waitDaemonStopped polls, since taskkill returns before the process is gone.
+func (h *scriptHome) waitDaemonStopped(pid int) bool {
+	for deadline := time.Now().Add(3 * time.Second); time.Now().Before(deadline); time.Sleep(100 * time.Millisecond) {
+		if !h.daemonRunning(pid) {
+			return true
+		}
+	}
+	return false
+}
+
+func skipUnlessWindows(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("on macOS and Linux sessions are tracked by the parent pid")
+	}
+}
+
+// Compaction fires SessionStart again for the same session, with no
+// SessionEnd to match it.
+func TestScriptsStopDaemonAfterCompactedSession(t *testing.T) {
+	skipUnlessWindows(t)
+	h := newScriptHome(t)
+	h.installFakeDaemon()
+
+	h.run("start.sh", hookInput(t, "session-a", ""))
+	pid := h.pidFile()
+	h.run("start.sh", hookInput(t, "session-a", "")) // after /compact
+	h.run("stop.sh", hookInput(t, "session-a", ""))
+
+	if !h.waitDaemonStopped(pid) {
+		t.Error("daemon still running after the only session ended")
+	}
+}
+
+func TestScriptsKeepDaemonWhileAnotherSessionRuns(t *testing.T) {
+	skipUnlessWindows(t)
+	h := newScriptHome(t)
+	h.installFakeDaemon()
+
+	h.run("start.sh", hookInput(t, "session-a", ""))
+	pid := h.pidFile()
+	h.run("start.sh", hookInput(t, "session-b", ""))
+	h.run("stop.sh", hookInput(t, "session-a", ""))
+
+	if !h.daemonRunning(pid) {
+		t.Fatal("daemon stopped while session-b still runs")
+	}
+
+	h.run("stop.sh", hookInput(t, "session-b", ""))
+	if !h.waitDaemonStopped(pid) {
+		t.Error("daemon still running after both sessions ended")
+	}
+}
+
+// A session that crashed or whose window was closed never runs SessionEnd;
+// its transcript stops changing.
+func TestScriptsIgnoreSessionThatEndedWithoutHook(t *testing.T) {
+	skipUnlessWindows(t)
+	h := newScriptHome(t)
+	h.installFakeDaemon()
+
+	crashed := filepath.Join(t.TempDir(), "crashed.jsonl")
+	os.WriteFile(crashed, []byte("{}\n"), 0644)
+	h.run("start.sh", hookInput(t, "session-crashed", crashed)) // no stop.sh follows
+	old := time.Now().Add(-13 * time.Hour)
+	os.Chtimes(crashed, old, old)
+
+	h.run("start.sh", hookInput(t, "session-a", ""))
+	pid := h.pidFile()
+	h.run("stop.sh", hookInput(t, "session-a", ""))
+
+	if !h.waitDaemonStopped(pid) {
+		t.Error("daemon kept running for a session idle for 13 hours")
 	}
 }
 

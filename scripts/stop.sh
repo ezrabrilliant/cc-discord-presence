@@ -6,7 +6,17 @@
 CLAUDE_DIR="$HOME/.claude"
 PID_FILE="$CLAUDE_DIR/discord-presence.pid"
 SESSIONS_DIR="$CLAUDE_DIR/discord-presence-sessions"
-REFCOUNT_FILE="$CLAUDE_DIR/discord-presence.refcount"
+REFCOUNT_FILE="$CLAUDE_DIR/discord-presence.refcount" # replaced by SESSIONS_DIR on Windows
+STALE_MINUTES=720
+
+# Hook input: JSON from Claude Code on stdin; none when run by hand
+HOOK_INPUT=""
+[[ -t 0 ]] || HOOK_INPUT=$(cat)
+
+# hook_field NAME prints a string field of the hook input
+hook_field() {
+    printf '%s' "$HOOK_INPUT" | tr -d '\r\n' | sed -n 's/.*"'"$1"'"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p'
+}
 
 # Detect platform
 OS=$(uname -s | tr '[:upper:]' '[:lower:]')
@@ -47,18 +57,41 @@ kill_process() {
     fi
 }
 
-# Session tracking: Windows uses refcount, Unix uses PID files
+# A session that crashed or whose window was closed never runs SessionEnd.
+# Drop markers whose transcript (or, lacking one, the marker itself) hasn't
+# changed for STALE_MINUTES.
+prune_stale_sessions() {
+    local marker transcript
+    for marker in "$SESSIONS_DIR"/*; do
+        [[ -f "$marker" ]] || continue
+        transcript=$(cat "$marker")
+        [[ -n "$transcript" && -f "$transcript" ]] || transcript=$marker
+        if [[ -n "$(find "$transcript" -mmin +"$STALE_MINUTES" 2>/dev/null)" ]]; then
+            rm -f "$marker"
+        fi
+    done
+}
+
+count_sessions() {
+    local marker count=0
+    for marker in "$SESSIONS_DIR"/*; do
+        [[ -f "$marker" ]] && count=$((count + 1))
+    done
+    echo "$count"
+}
+
+# Session tracking: Windows uses one marker per session id, Unix uses PID files
 if $IS_WINDOWS; then
-    CURRENT_COUNT=$(cat "$REFCOUNT_FILE" 2>/dev/null || echo "1")
-    ACTIVE_SESSIONS=$((CURRENT_COUNT - 1))
-    [[ $ACTIVE_SESSIONS -lt 0 ]] && ACTIVE_SESSIONS=0
+    rm -f "$REFCOUNT_FILE"
+    SESSION_ID=$(hook_field session_id | tr -cd 'A-Za-z0-9_-')
+    rm -f "$SESSIONS_DIR/${SESSION_ID:-manual}"
+    prune_stale_sessions
+    ACTIVE_SESSIONS=$(count_sessions)
 
     if [[ $ACTIVE_SESSIONS -gt 0 ]]; then
-        echo "$ACTIVE_SESSIONS" > "$REFCOUNT_FILE"
         echo "Discord Rich Presence still in use by $ACTIVE_SESSIONS session(s)"
         exit 0
     fi
-    rm -f "$REFCOUNT_FILE"
 else
     SESSION_PID="${PPID:-$$}"
     rm -f "$SESSIONS_DIR/$SESSION_PID"
