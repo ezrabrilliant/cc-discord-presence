@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - On Windows the daemon kept running, and Discord kept showing the card, after every Claude Code session had closed
   - SessionStart runs again after `/compact` (manual or automatic) with no SessionEnd to match, so the session refcount never got back to zero; a crashed session or a closed window did the same
   - Sessions are now tracked with one marker per session id from the hook input, in `~/.claude/discord-presence-sessions/`, replacing `discord-presence.refcount`; a marker whose transcript hasn't changed for 12 hours is dropped
+- Reading a reply from Discord no longer assumes the whole frame arrives in one read; a frame split across reads was misparsed
 
 ## [1.0.6] - 2026-10-12
 

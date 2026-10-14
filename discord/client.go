@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"time"
 )
@@ -150,15 +151,17 @@ func (c *Client) send(opcode int, data interface{}) error {
 	return err
 }
 
+// receive reads one frame. A single Read may return part of it, so both the
+// header and the payload are read in full.
 func (c *Client) receive() ([]byte, error) {
 	header := make([]byte, 8)
-	if _, err := c.conn.Read(header); err != nil {
+	if _, err := io.ReadFull(c.conn, header); err != nil {
 		return nil, err
 	}
 
 	length := binary.LittleEndian.Uint32(header[4:8])
 	payload := make([]byte, length)
-	if _, err := c.conn.Read(payload); err != nil {
+	if _, err := io.ReadFull(c.conn, payload); err != nil {
 		return nil, err
 	}
 
