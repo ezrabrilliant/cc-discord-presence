@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `start.sh` and `stop.sh`, which the plugin hooks run on every platform (Windows included, through Git Bash), trust the pid file only when that pid is a `cc-discord-presence` process, as `start.ps1` and `stop.ps1` do since 1.0.6
+  - A pid reused after the daemon exited (reboot, Discord not running) made `start.sh` report the daemon as running without starting it, and `stop.sh` force-stop the unrelated program
+
 ## [1.0.6] - 2026-10-12
 
 ### Fixed

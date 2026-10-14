@@ -31,6 +31,19 @@ process_exists() {
     fi
 }
 
+# The pid file outlives a daemon that exited (reboot, Discord not running),
+# and the OS may hand its pid to another program: trust it only when that
+# pid runs our binary.
+daemon_running() {
+    local pid=$1
+    [[ -n "$pid" ]] || return 1
+    if $IS_WINDOWS; then
+        tasklist //FI "PID eq $pid" //FO CSV //NH 2>/dev/null | grep -q '^"cc-discord-presence-'
+    else
+        ps -p "$pid" -o args= 2>/dev/null | grep -q 'cc-discord-presence-'
+    fi
+}
+
 # Ensure directories exist
 mkdir -p "$CLAUDE_DIR" "$BIN_DIR" "$SESSIONS_DIR"
 
@@ -75,7 +88,7 @@ VERSION_FILE="$BINARY.version"
 # (claude plugin update replaces this script, never the binary.)
 if [[ -f "$PID_FILE" ]]; then
     OLD_PID=$(cat "$PID_FILE")
-    if process_exists "$OLD_PID"; then
+    if daemon_running "$OLD_PID"; then
         if [[ "$(cat "$VERSION_FILE" 2>/dev/null)" == "$VERSION" ]]; then
             echo "Discord Rich Presence already running (PID: $OLD_PID, sessions: $ACTIVE_SESSIONS)"
             exit 0

@@ -25,6 +25,19 @@ process_exists() {
     fi
 }
 
+# The pid file outlives a daemon that exited (reboot, Discord not running),
+# and the OS may hand its pid to another program: trust it only when that
+# pid runs our binary.
+daemon_running() {
+    local pid=$1
+    [[ -n "$pid" ]] || return 1
+    if $IS_WINDOWS; then
+        tasklist //FI "PID eq $pid" //FO CSV //NH 2>/dev/null | grep -q '^"cc-discord-presence-'
+    else
+        ps -p "$pid" -o args= 2>/dev/null | grep -q 'cc-discord-presence-'
+    fi
+}
+
 kill_process() {
     local pid=$1
     if $IS_WINDOWS; then
@@ -74,7 +87,7 @@ fi
 # Stop the daemon
 if [[ -f "$PID_FILE" ]]; then
     PID=$(cat "$PID_FILE")
-    if process_exists "$PID"; then
+    if daemon_running "$PID"; then
         kill_process "$PID"
         echo "Discord Rich Presence stopped (PID: $PID)"
     fi
