@@ -127,7 +127,10 @@ func (h *scriptHome) run(name, stdin string) string {
 // exec is run for use from other goroutines, which can't call t.Fatal.
 func (h *scriptHome) exec(name, stdin string) (string, error) {
 	cmd := exec.Command(h.bash, filepath.Join("scripts", name))
-	cmd.Env = append(os.Environ(), "HOME="+h.dir, "CC_FAKE_DAEMON=1")
+	// The scripts look for Claude Code under a name no real process has, so
+	// the Claude Code running these tests doesn't count; startClaudeCode
+	// starts stand-ins.
+	cmd.Env = append(os.Environ(), "HOME="+h.dir, "CC_FAKE_DAEMON=1", "CC_DISCORD_PRESENCE_CLAUDE_PROCESS="+fakeClaudeCode)
 	cmd.Stdin = strings.NewReader(stdin)
 	// A daemon that inherits the script's output pipe keeps it open after
 	// the script exits; Claude Code then waits on the hook until it times out.
@@ -336,39 +339,50 @@ func (h *scriptHome) transcript(sessionID string, age time.Duration) string {
 	return path
 }
 
+const fakeClaudeCode = "cctestclaude"
+
+// startClaudeCode starts a stand-in for a running Claude Code session.
+func (h *scriptHome) startClaudeCode() {
+	h.t.Helper()
+	name := fakeClaudeCode
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	startProcessAt(h.t, filepath.Join(h.t.TempDir(), name))
+}
+
 // Sessions started before the plugin was installed (or by an older version
 // of it) ran no SessionStart hook and have no marker. Closing another session
 // must not take the card away from them.
-func TestStopScriptKeepsDaemonForActiveSessionWithoutMarker(t *testing.T) {
+func TestStopScriptKeepsDaemonWhileAnotherClaudeCodeRuns(t *testing.T) {
 	h := newScriptHome(t)
 	h.installFakeDaemon()
-	h.transcript("session-from-before-install", time.Minute)
+	h.startClaudeCode() // the session ending, still running during its hook
+	h.startClaudeCode() // a session started before the plugin was installed
 
-	h.run("start.sh", hookInput(t, "session-a", h.transcript("session-a", 0)))
+	h.run("start.sh", hookInput(t, "session-a", ""))
 	pid := h.pidFile()
-	h.run("stop.sh", hookInput(t, "session-a", h.transcript("session-a", 0)))
+	h.run("stop.sh", hookInput(t, "session-a", ""))
 
 	if !h.daemonRunning(pid) {
-		t.Error("daemon stopped while another Claude Code session is active")
+		t.Error("daemon stopped while another Claude Code session runs")
 	}
 }
 
-func TestStopScriptStopsDaemonWhenSessionWithoutMarkerIsIdle(t *testing.T) {
+func TestStopScriptStopsDaemonWhenNoOtherClaudeCodeRuns(t *testing.T) {
 	h := newScriptHome(t)
 	h.installFakeDaemon()
-	h.transcript("session-from-before-install", 20*time.Minute)
+	h.startClaudeCode() // the session ending
 
-	h.run("start.sh", hookInput(t, "session-a", h.transcript("session-a", 0)))
+	h.run("start.sh", hookInput(t, "session-a", ""))
 	pid := h.pidFile()
-	h.run("stop.sh", hookInput(t, "session-a", h.transcript("session-a", 0)))
+	h.run("stop.sh", hookInput(t, "session-a", ""))
 
 	if !h.waitDaemonStopped(pid) {
-		t.Error("daemon kept running for a session idle for 20 minutes")
+		t.Error("daemon still running after the last Claude Code session ended")
 	}
 }
 
-// A session that ended through its hook has a fresh transcript too; it must
-// not keep the daemon alive once the last session closes.
 func TestStopScriptStopsDaemonWhenEverySessionEnded(t *testing.T) {
 	h := newScriptHome(t)
 	h.installFakeDaemon()

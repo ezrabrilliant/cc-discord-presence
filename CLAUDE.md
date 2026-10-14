@@ -68,7 +68,8 @@ cc-discord-presence/
 ### Session Tracking (Platform-specific)
 - **macOS/Linux**: PID-based tracking via files in `~/.claude/discord-presence-sessions/`
 - **Windows**: One marker per session id in `~/.claude/discord-presence-sessions/`, read from the hook input (PPID unreliable on Windows). SessionStart runs again after `/compact` for the same id, so markers can't drift the way a refcount did. A marker whose transcript hasn't changed for 12 hours is dropped (a crashed session never runs SessionEnd)
-- **Both**: Sessions started before the plugin was installed (or by an older version) have no marker. When the last marker goes, `stop.sh` still keeps the daemon while another transcript changed in the last 15 minutes and isn't recorded as ended in `~/.claude/discord-presence-ended/` (one file per session id, written by `stop.sh`). The JSONL fallback skips ended sessions unless their transcript changed after they ended (resumed)
+- **Both**: Sessions started before the plugin was installed (or by an older version) have no marker. When the last marker goes, `stop.sh` still keeps the daemon while another Claude Code process runs (`claude.exe` / `claude`; the ending session's own process counts as one). `stop.sh` records ended sessions in `~/.claude/discord-presence-ended/` (one file per session id); the JSONL fallback skips them unless their transcript changed after they ended (resumed)
+- **Daemon**: lists running Claude Code processes itself (`claudecode_*.go`; on Windows it skips the desktop app, also `claude.exe`, under `AnthropicClaude`) and exits `ExitGrace` (30 s) after the last one is gone, which covers windows closed without SessionEnd. It never exits that way on a system where it never found a Claude Code process
 
 ### Model Pricing (Update when new models release)
 Located at top of `main.go` in `modelPrices`, keyed by display name ("Opus 4.5"), which `formatModelName` derives from any model ID (including Bedrock and Vertex AI forms). Prices come from https://platform.claude.com/docs/en/about-claude/pricing.
@@ -107,7 +108,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines. Key points:
 - Shows nudge message when using JSONL fallback
 - Tokens shown are context size (the last request's input, cached tokens included), not a session total
 - Only pushes to Discord when the displayed text changes
-- Clears the card when there is no session data, or the session's data hasn't changed for `IdleTimeout` (15 minutes, longer than Claude Code's 10-minute cap on a Bash command)
+- A session whose data hasn't changed for `IdleTimeout` (15 minutes, longer than Claude Code's 10-minute cap on a Bash command) shows as "Idling in" while Claude Code runs, and is cleared when it doesn't; no session data clears the card
 - start.sh checks for and starts the daemon under a lock (`~/.claude/discord-presence.lock`, a directory), so sessions starting together don't each start one
 - start.sh/start.ps1 re-download the binary when `<binary>.version` doesn't match `VERSION`, and stop a running daemon from another release first
 

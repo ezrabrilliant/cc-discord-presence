@@ -768,10 +768,13 @@ func useSessionFiles(t *testing.T) (module string) {
 	t.Helper()
 	origData, origModule, origProjects := dataFilePath, moduleFilePath, projectsDir
 	origClient, origLast, origNudge := discordClient, lastPresence, nudgeShown
+	origProcesses := claudeCodeProcesses
 	t.Cleanup(func() {
 		dataFilePath, moduleFilePath, projectsDir = origData, origModule, origProjects
 		discordClient, lastPresence, nudgeShown = origClient, origLast, origNudge
+		claudeCodeProcesses = origProcesses
 	})
+	claudeCodeProcesses = func() []int { return []int{4242} } // one session open
 	dir := t.TempDir()
 	dataFilePath = filepath.Join(dir, "discord-presence-data.json")
 	moduleFilePath = filepath.Join(dir, "discord-presence-module.json")
@@ -803,9 +806,11 @@ func TestRefreshPresenceShowsActiveSession(t *testing.T) {
 	}
 }
 
-// A crashed session, or one left open overnight, must not keep the card.
-func TestRefreshPresenceClearsIdleSession(t *testing.T) {
+// A crashed session, or one whose terminal was closed without its SessionEnd
+// hook, must not keep the card.
+func TestRefreshPresenceClearsIdleSessionWhenClaudeCodeIsClosed(t *testing.T) {
 	module := useSessionFiles(t)
+	claudeCodeProcesses = func() []int { return nil }
 	os.WriteFile(module, []byte(`{"session_id":"s1","cwd":"/work/kadens","model":{"display_name":"Opus 5.5"}}`), 0644)
 	longAgo := time.Now().Add(-IdleTimeout - time.Minute)
 	os.Chtimes(module, longAgo, longAgo)
@@ -921,5 +926,54 @@ func TestFindMostRecentJSONLSkipsEndedSessions(t *testing.T) {
 	write(closed, -time.Minute)
 	if got, _, _ := findMostRecentJSONL(); got != closed {
 		t.Errorf("picked %s, want the resumed session", filepath.Base(got))
+	}
+}
+
+// While Claude Code is open in some terminal, an idle session shows as idle,
+// as editor integrations do, rather than disappearing.
+func TestRefreshPresenceShowsIdleSessionWhileClaudeCodeIsOpen(t *testing.T) {
+	module := useSessionFiles(t)
+	os.WriteFile(module, []byte(`{"session_id":"s1","cwd":"/work/kadens","model":{"display_name":"Opus 5.5"}}`), 0644)
+	longAgo := time.Now().Add(-IdleTimeout - time.Minute)
+	os.Chtimes(module, longAgo, longAgo)
+
+	refreshPresence()
+
+	if !strings.HasPrefix(lastPresence, "Idling in: kadens") {
+		t.Errorf("idle session with Claude Code open shown as %q, want it idling", lastPresence)
+	}
+}
+
+func TestPresenceTextIdle(t *testing.T) {
+	details, _ := presenceText(&SessionData{ProjectName: "kadens", GitBranch: "main", Idle: true})
+	if details != "Idling in: kadens (main)" {
+		t.Errorf("details = %q", details)
+	}
+}
+
+// The daemon outlives a terminal closed without its SessionEnd hook (window
+// closed, crash); it stops once Claude Code is gone everywhere.
+func TestClaudeCodeGone(t *testing.T) {
+	orig := claudeCodeProcesses
+	origSeen, origLastSeen := sawClaudeCode, lastSawClaudeCode
+	defer func() { claudeCodeProcesses, sawClaudeCode, lastSawClaudeCode = orig, origSeen, origLastSeen }()
+	sawClaudeCode, lastSawClaudeCode = false, time.Time{}
+	var running []int
+	claudeCodeProcesses = func() []int { return running }
+	now := time.Now()
+
+	if claudeCodeGone(now.Add(time.Hour)) {
+		t.Error("gone although no Claude Code process was ever found: on such a system the hooks stop the daemon")
+	}
+	running = []int{4242}
+	if claudeCodeGone(now) {
+		t.Error("gone while Claude Code runs")
+	}
+	running = nil
+	if claudeCodeGone(now.Add(ExitGrace - time.Second)) {
+		t.Error("gone before ExitGrace passed")
+	}
+	if !claudeCodeGone(now.Add(ExitGrace + time.Second)) {
+		t.Error("not gone after Claude Code closed everywhere for longer than ExitGrace")
 	}
 }

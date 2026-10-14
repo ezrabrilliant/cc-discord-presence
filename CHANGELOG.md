@@ -26,10 +26,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Each response was counted once per content block, since Claude Code writes a line per block with the same usage
   - A model without a known price leaves the cost off the card instead of guessing
   - Claude Code's `<synthetic>` notices (API errors, interruptions) no longer replace the model and token count with "Claude" and 0
-- The card is cleared when there is no session to show, or the session has been idle for 15 minutes (a crashed session, a window left open); previously it kept showing the last session for as long as the daemon ran
+- The card no longer shows a session that is over for as long as the daemon runs
+  - A session without activity for 15 minutes shows as "Idling in" while Claude Code is open in some terminal, and is cleared when Claude Code isn't running (it crashed, or its window closed without the SessionEnd hook)
+  - The daemon exits by itself 30 seconds after the last Claude Code process is gone
 - The elapsed timer counts from the start of the session, not of the daemon, which every session shares; from the JSONL fallback it counts from the first message after the last break of more than 15 minutes, so a resumed session doesn't show a day-long timer
 - Closing one Claude Code session no longer takes the card away while other sessions are still running but have no marker: those started before the plugin was installed, or by an older version of it
-  - `stop.sh` keeps the daemon while another session's transcript changed in the last 15 minutes, unless that session ended
+  - `stop.sh` keeps the daemon while another Claude Code process runs
   - `stop.sh` records ended sessions in `~/.claude/discord-presence-ended/`, and the daemon no longer shows a closed session because its transcript is the freshest, unless it is resumed
 - Sessions starting at the same time (several terminals opened at once) no longer start a daemon each; only the last was in the pid file, so the others were never stopped. `start.sh` now checks and starts the daemon under a lock, broken after a minute if a killed script left it
 

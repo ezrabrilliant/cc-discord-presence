@@ -29,10 +29,14 @@ const (
 	PollInterval = 3 * time.Second
 
 	// IdleTimeout is how long a session can go without activity before the
-	// card is cleared. It outlasts the longest single tool call (Claude Code
-	// caps a Bash command at 10 minutes), so a long build or test run keeps
-	// the card.
+	// card shows it as idle, or clears if Claude Code isn't running. It
+	// outlasts the longest single tool call (Claude Code caps a Bash command
+	// at 10 minutes), so a long build or test run still shows as working.
 	IdleTimeout = 15 * time.Minute
+
+	// ExitGrace is how long the daemon outlives the last Claude Code process,
+	// for a terminal closed without its SessionEnd hook.
+	ExitGrace = 30 * time.Second
 )
 
 // modelPrice is a model's list price in dollars per million tokens. Cache
@@ -183,6 +187,7 @@ type SessionData struct {
 	// LastActivity is when the session's data last changed: Claude Code
 	// writes it on every prompt, tool call and response.
 	LastActivity time.Time
+	Idle         bool
 }
 
 // Usage is the usage block of one API response, as Claude Code records it.
@@ -637,9 +642,13 @@ func setSource(source string) {
 
 // presenceText builds the two activity lines Discord shows.
 func presenceText(session *SessionData) (details, state string) {
-	details = fmt.Sprintf("Working on: %s", session.ProjectName)
+	verb := "Working on"
+	if session.Idle {
+		verb = "Idling in"
+	}
+	details = fmt.Sprintf("%s: %s", verb, session.ProjectName)
 	if session.GitBranch != "" {
-		details = fmt.Sprintf("Working on: %s (%s)", session.ProjectName, session.GitBranch)
+		details = fmt.Sprintf("%s: %s (%s)", verb, session.ProjectName, session.GitBranch)
 	}
 
 	// model | context size | cost (left out rather than guessed)
@@ -651,25 +660,63 @@ func presenceText(session *SessionData) (details, state string) {
 }
 
 // refreshPresence shows the current session on Discord, or empties the card
-// when there is none or it has gone idle. It returns the session shown.
+// when there is none. It returns the session shown.
 func refreshPresence() *SessionData {
 	session := readSessionData()
-	if session == nil || sessionIsIdle(session, time.Now()) {
+	if session == nil {
 		clearPresence()
 		return nil
+	}
+	if sessionIsIdle(session, time.Now()) {
+		// While Claude Code is open in some terminal the card stays, marked
+		// idle; otherwise the session crashed or closed without its hook.
+		if len(claudeCodeProcesses()) == 0 {
+			clearPresence()
+			return nil
+		}
+		session.Idle = true
 	}
 	updatePresence(session)
 	return session
 }
 
-// sessionIsIdle decides when nobody is working in the session any more, so
-// the card should go: a session that crashed or was closed without its
-// SessionEnd hook, or one left open overnight.
+// sessionIsIdle decides when nobody is working in the session any more:
+// left open but unused, crashed, or closed without its SessionEnd hook.
 func sessionIsIdle(session *SessionData, now time.Time) bool {
 	if session.LastActivity.IsZero() {
 		return false // unknown: don't hide an otherwise valid session
 	}
 	return now.Sub(session.LastActivity) > IdleTimeout
+}
+
+var (
+	claudeCodeProcesses = listClaudeCode
+	sawClaudeCode       bool
+	lastSawClaudeCode   time.Time
+)
+
+// claudeCodeGone reports when Claude Code has been closed everywhere for
+// ExitGrace. Where no Claude Code process was ever found (named differently
+// than expected), it never reports gone; the SessionEnd hook stops the
+// daemon there.
+func claudeCodeGone(now time.Time) bool {
+	if len(claudeCodeProcesses()) > 0 {
+		sawClaudeCode, lastSawClaudeCode = true, now
+		return false
+	}
+	return sawClaudeCode && now.Sub(lastSawClaudeCode) > ExitGrace
+}
+
+// exitIfClaudeCodeGone stops the daemon once Claude Code is closed
+// everywhere, emptying the card first.
+func exitIfClaudeCodeGone() {
+	if !claudeCodeGone(time.Now()) {
+		return
+	}
+	fmt.Println("⏹ Claude Code is no longer running, exiting")
+	clearPresence()
+	discordClient.Close()
+	os.Exit(0)
 }
 
 func clearPresence() {
@@ -753,6 +800,7 @@ func watchForChanges() {
 			}
 			fmt.Fprintf(os.Stderr, "Watcher error: %v\n", err)
 		case <-ticker.C:
+			exitIfClaudeCodeGone()
 			// Poll reads from either statusline or JSONL fallback
 			refreshPresence()
 		}
@@ -764,6 +812,7 @@ func pollForChanges() {
 	defer ticker.Stop()
 
 	for range ticker.C {
+		exitIfClaudeCodeGone()
 		refreshPresence()
 	}
 }

@@ -9,7 +9,7 @@ SESSIONS_DIR="$CLAUDE_DIR/discord-presence-sessions"
 REFCOUNT_FILE="$CLAUDE_DIR/discord-presence.refcount" # replaced by SESSIONS_DIR on Windows
 ENDED_DIR="$CLAUDE_DIR/discord-presence-ended"
 STALE_MINUTES=720
-IDLE_MINUTES=15 # the daemon's IdleTimeout
+CLAUDE_PROCESS="${CC_DISCORD_PRESENCE_CLAUDE_PROCESS:-claude}" # tests use a stand-in
 
 # Hook input: JSON from Claude Code on stdin; none when run by hand
 HOOK_INPUT=""
@@ -22,9 +22,9 @@ hook_field() {
 
 SESSION_ID=$(hook_field session_id | tr -cd 'A-Za-z0-9_-')
 
-# Record that this session ended: its transcript, fresh as it is, then
-# neither keeps the daemon running nor shows on the card (the daemon skips it
-# until it changes again, as on --resume). Records go after a day.
+# Record that this session ended: the daemon then skips its transcript, the
+# freshest just now, until it changes again (as on --resume). Records go
+# after a day.
 if [[ -n "$SESSION_ID" ]]; then
     mkdir -p "$ENDED_DIR"
     touch "$ENDED_DIR/$SESSION_ID"
@@ -85,18 +85,16 @@ prune_stale_sessions() {
     done
 }
 
-# Sessions started before the plugin was installed, or by an older version
-# of it, ran no SessionStart hook and have no marker. One of them is active
-# when its transcript changed in the last IDLE_MINUTES and it hasn't ended.
-untracked_session_active() {
-    local transcript id
-    while IFS= read -r transcript; do
-        id=$(basename "$transcript" .jsonl)
-        [[ "$id" == "$SESSION_ID" ]] && continue
-        [[ -f "$ENDED_DIR/$id" && ! "$transcript" -nt "$ENDED_DIR/$id" ]] && continue
-        return 0
-    done < <(find "$CLAUDE_DIR/projects" -mindepth 2 -maxdepth 2 -name '*.jsonl' -mmin -"$IDLE_MINUTES" 2>/dev/null)
-    return 1
+# claude_code_count prints how many Claude Code processes run, the ending
+# session's own included (it runs its SessionEnd hook). On Windows this also
+# counts the desktop app, which shares the name; the daemon tells them apart
+# and exits by itself once Claude Code is gone.
+claude_code_count() {
+    if $IS_WINDOWS; then
+        tasklist //FI "IMAGENAME eq $CLAUDE_PROCESS.exe" //FO CSV //NH 2>/dev/null | grep -ci "^\"$CLAUDE_PROCESS.exe\""
+    else
+        pgrep -x "$CLAUDE_PROCESS" 2>/dev/null | wc -l
+    fi
 }
 
 count_sessions() {
@@ -143,9 +141,11 @@ else
     rm -rf "$SESSIONS_DIR"
 fi
 
-# A hook (not a manual stop) leaves the daemon to sessions without a marker
-if [[ -n "$SESSION_ID" ]] && untracked_session_active; then
-    echo "Discord Rich Presence still in use by a session started before the plugin"
+# Sessions started before the plugin was installed, or by an older version
+# of it, ran no SessionStart hook and have no marker, but still run. A hook
+# (not a manual stop) leaves the daemon to them.
+if [[ -n "$SESSION_ID" ]] && (( $(claude_code_count) > 1 )); then
+    echo "Discord Rich Presence still in use by another Claude Code session"
     exit 0
 fi
 
