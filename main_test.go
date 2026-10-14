@@ -720,3 +720,24 @@ func TestUpdatePresenceWhileDiscordIsAway(t *testing.T) {
 		t.Error("activity not recorded as handed over; every poll would resend it and log an error")
 	}
 }
+
+// Transcripts hold lines of several megabytes (large tool results). A
+// bufio.Scanner stops at its buffer limit and the rest of the file was
+// silently ignored, so the card showed an old model and token count.
+func TestParseJSONLSessionReadsPastLongLines(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "session.jsonl")
+	longLine := `{"type":"user","message":{"content":"` + strings.Repeat("x", 3<<20) + `"}}`
+	content := `{"type":"user","cwd":"/work/kadens"}` + "\n" +
+		`{"type":"assistant","message":{"model":"claude-haiku-4-5-20241022","usage":{"input_tokens":10}}}` + "\n" +
+		longLine + "\n" +
+		`{"type":"assistant","message":{"model":"claude-opus-4-5-20251101","usage":{"input_tokens":50000}}}` + "\n"
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	got := parseJSONLSession(path, "")
+
+	if got.ModelName != "Opus 4.5" || got.TotalTokens != 50000 {
+		t.Errorf("model = %q, tokens = %d; want the message after the long line (Opus 4.5, 50000)", got.ModelName, got.TotalTokens)
+	}
+}

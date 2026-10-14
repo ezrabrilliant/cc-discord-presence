@@ -349,14 +349,16 @@ func parseJSONLSession(jsonlPath, _ string) *SessionData {
 		projectPath       string
 	)
 
-	scanner := bufio.NewScanner(file)
-	// Increase buffer size for large lines
-	buf := make([]byte, 0, 64*1024)
-	scanner.Buffer(buf, 1024*1024)
-
-	for scanner.Scan() {
+	// Lines can be megabytes long (large tool results). A bufio.Scanner stops
+	// at its buffer limit, which silently dropped the rest of the file.
+	reader := bufio.NewReader(file)
+	for {
+		line, readErr := reader.ReadBytes('\n')
+		if readErr != nil && len(line) == 0 {
+			break
+		}
 		var msg JSONLMessage
-		if err := json.Unmarshal(scanner.Bytes(), &msg); err != nil {
+		if err := json.Unmarshal(line, &msg); err != nil {
 			continue
 		}
 

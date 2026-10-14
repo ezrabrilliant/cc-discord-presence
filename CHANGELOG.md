@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The card no longer disappears for good when Discord starts after Claude Code, or quits or restarts (for an update) during a session
   - The daemon exited when Discord wasn't running at startup, and never reconnected after losing the connection
   - It now retries every 3 seconds, notices a closed connection even while the card text stays the same, and sends the current activity again after reconnecting
+- The JSONL fallback reads past transcript lines longer than 1 MB (large tool results); it stopped at the first one, so the card showed the model and token count from before it
 
 ## [1.0.6] - 2026-10-12
 
