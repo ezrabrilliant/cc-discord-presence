@@ -125,7 +125,29 @@ func init() {
 	moduleFilePath = filepath.Join(claudeDir, "discord-presence-module.json")
 }
 
+// setupLog sends all output to the file named by "--log <path>". The Windows
+// start script passes it because it can't redirect the daemon itself:
+// Start-Process redirection makes the daemon inherit the hook's output pipe,
+// and Claude Code then waits on the hook until it times out.
+func setupLog(args []string) error {
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] == "--log" {
+			f, err := os.OpenFile(args[i+1], os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+			if err != nil {
+				return err
+			}
+			os.Stdout, os.Stderr = f, f
+			return nil
+		}
+	}
+	return nil
+}
+
 func main() {
+	if err := setupLog(os.Args[1:]); err != nil {
+		fmt.Fprintf(os.Stderr, "Error opening log file: %v\n", err)
+	}
+
 	fmt.Println(`
 ╔═══════════════════════════════════════════════════════════╗
 ║     Clawd Code - Discord Rich Presence                    ║

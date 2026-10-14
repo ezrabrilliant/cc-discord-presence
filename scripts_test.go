@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -19,6 +20,7 @@ import (
 // stays alive, so no test talks to Discord.
 func TestMain(m *testing.M) {
 	if os.Getenv("CC_FAKE_DAEMON") == "1" {
+		setupLog(os.Args[1:])
 		fmt.Println("fake daemon running")
 		time.Sleep(2 * time.Minute)
 		os.Exit(0)
@@ -58,7 +60,11 @@ type scriptHome struct {
 }
 
 func newScriptHome(t *testing.T) *scriptHome {
-	h := &scriptHome{t: t, bash: findBash(t), dir: t.TempDir()}
+	return newScriptHomeAt(t, t.TempDir())
+}
+
+func newScriptHomeAt(t *testing.T, dir string) *scriptHome {
+	h := &scriptHome{t: t, bash: findBash(t), dir: dir}
 	os.MkdirAll(h.claude("bin"), 0755)
 	t.Cleanup(func() {
 		if pid := h.pidFile(); pid != 0 && h.daemonRunning(pid) {
@@ -85,14 +91,20 @@ func (h *scriptHome) installFakeDaemon() {
 	os.WriteFile(bin+".version", []byte(scriptVersion(h.t)+"\n"), 0644)
 }
 
-// run executes scripts/<name> the way a hook does, feeding stdin as the hook
-// input JSON.
+// run executes scripts/<name> the way a hook does: input JSON on stdin,
+// output read from a pipe until it closes.
 func (h *scriptHome) run(name, stdin string) string {
 	h.t.Helper()
 	cmd := exec.Command(h.bash, filepath.Join("scripts", name))
 	cmd.Env = append(os.Environ(), "HOME="+h.dir, "CC_FAKE_DAEMON=1")
 	cmd.Stdin = strings.NewReader(stdin)
+	// A daemon that inherits the script's output pipe keeps it open after
+	// the script exits; Claude Code then waits on the hook until it times out.
+	cmd.WaitDelay = 3 * time.Second
 	out, err := cmd.CombinedOutput()
+	if errors.Is(err, exec.ErrWaitDelay) {
+		h.t.Fatalf("%s exited but its output pipe stayed open (inherited by the daemon)\n%s", name, out)
+	}
 	if err != nil {
 		h.t.Fatalf("%s failed: %v\n%s", name, err, out)
 	}
@@ -206,6 +218,28 @@ func TestStopScriptSparesProcessThatReusedDaemonPid(t *testing.T) {
 
 	if !alive() {
 		t.Errorf("stop.sh killed pid %d, which is not the daemon", pid)
+	}
+}
+
+// The README tells users to check ~/.claude/discord-presence.log; it is the
+// only place a Discord connection error shows up. The home has a space, as
+// Windows profile folders like "C:\Users\John Doe" do.
+func TestStartScriptWritesDaemonLog(t *testing.T) {
+	h := newScriptHomeAt(t, filepath.Join(t.TempDir(), "John Doe"))
+	h.installFakeDaemon()
+
+	h.run("start.sh", "")
+
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		data, _ := os.ReadFile(h.claude("discord-presence.log"))
+		if strings.Contains(string(data), "fake daemon running") {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("daemon output never reached discord-presence.log (got %q)", data)
+		}
+		time.Sleep(100 * time.Millisecond)
 	}
 }
 

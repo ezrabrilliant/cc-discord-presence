@@ -1,8 +1,10 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -667,5 +669,37 @@ func TestPresenceText(t *testing.T) {
 	}
 	if state != "Opus 5.5 | 54.1K tokens | $1.2700" {
 		t.Errorf("state = %q", state)
+	}
+}
+
+// The Windows start script hands the log path to the daemon instead of
+// redirecting its output (see start.sh).
+func TestSetupLogSendsOutputToFile(t *testing.T) {
+	origOut, origErr := os.Stdout, os.Stderr
+	path := filepath.Join(t.TempDir(), "discord-presence.log")
+
+	if err := setupLog([]string{"--log", path}); err != nil {
+		t.Fatalf("setupLog: %v", err)
+	}
+	fmt.Println("to stdout")
+	fmt.Fprintln(os.Stderr, "to stderr")
+	if os.Stdout != origOut {
+		os.Stdout.Close()
+	}
+	os.Stdout, os.Stderr = origOut, origErr
+
+	data, _ := os.ReadFile(path)
+	if !strings.Contains(string(data), "to stdout") || !strings.Contains(string(data), "to stderr") {
+		t.Errorf("log file holds %q, want both stdout and stderr output", data)
+	}
+}
+
+func TestSetupLogWithoutFlagKeepsOutput(t *testing.T) {
+	origOut := os.Stdout
+	if err := setupLog(nil); err != nil {
+		t.Fatalf("setupLog: %v", err)
+	}
+	if os.Stdout != origOut {
+		t.Error("setupLog without --log replaced os.Stdout")
 	}
 }
