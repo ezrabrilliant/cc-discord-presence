@@ -153,3 +153,45 @@ func TestKeepConnected_ShowsActivityOnceDiscordStarts(t *testing.T) {
 
 	discord.expectActivity(t, "Working on: kadens")
 }
+
+func TestClearActivity_EmptiesTheCard(t *testing.T) {
+	discord := newFakeDiscord(true)
+	client := NewClient("test")
+	client.dial = discord.dial
+	client.KeepConnected(20*time.Millisecond, t.Logf)
+	defer client.Close()
+	waitFor(t, "connected", client.Connected)
+
+	client.SetActivity(Activity{Details: "Working on: kadens"})
+	discord.expectActivity(t, "Working on: kadens")
+	if err := client.ClearActivity(); err != nil {
+		t.Fatalf("ClearActivity: %v", err)
+	}
+
+	discord.expectActivity(t, "") // SET_ACTIVITY without an activity
+}
+
+// A cleared card must stay cleared when Discord reconnects.
+func TestClearActivity_NotRestoredAfterReconnect(t *testing.T) {
+	discord := newFakeDiscord(true)
+	client := NewClient("test")
+	client.dial = discord.dial
+	client.KeepConnected(20*time.Millisecond, t.Logf)
+	defer client.Close()
+	waitFor(t, "connected", client.Connected)
+	client.SetActivity(Activity{Details: "Working on: kadens"})
+	discord.expectActivity(t, "Working on: kadens")
+	client.ClearActivity()
+	discord.expectActivity(t, "")
+
+	discord.quit()
+	waitFor(t, "the client notices Discord quit", func() bool { return !client.Connected() })
+	discord.start()
+	waitFor(t, "reconnected", client.Connected)
+
+	select {
+	case got := <-discord.details:
+		t.Errorf("after reconnecting the client sent activity %q, want nothing", got)
+	case <-time.After(200 * time.Millisecond):
+	}
+}

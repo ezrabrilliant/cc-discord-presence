@@ -106,6 +106,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines. Key points:
 - Shows nudge message when using JSONL fallback
 - Tokens shown are context size (the last request's input, cached tokens included), not a session total
 - Only pushes to Discord when the displayed text changes
+- Clears the card when there is no session data, or the session's data hasn't changed for `IdleTimeout` (15 minutes, longer than Claude Code's 10-minute cap on a Bash command)
 - start.sh/start.ps1 re-download the binary when `<binary>.version` doesn't match `VERSION`, and stop a running daemon from another release first
 
 ## Releasing

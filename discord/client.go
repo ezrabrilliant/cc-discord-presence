@@ -170,6 +170,22 @@ func (c *Client) SetActivity(activity Activity) error {
 	return c.sendActivity(activity)
 }
 
+// ClearActivity empties the card. It also forgets the last activity, so a
+// reconnect doesn't bring the card back.
+func (c *Client) ClearActivity() error {
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
+	c.mu.Lock()
+	c.last = nil
+	c.mu.Unlock()
+	// SET_ACTIVITY without an activity clears it
+	return c.send(opFrame, map[string]interface{}{
+		"cmd":   "SET_ACTIVITY",
+		"args":  map[string]interface{}{"pid": os.Getpid()},
+		"nonce": fmt.Sprintf("%d", time.Now().UnixNano()),
+	})
+}
+
 // resend sends the last activity again, after a reconnect.
 func (c *Client) resend() {
 	c.writeMu.Lock()

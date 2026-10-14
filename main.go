@@ -27,6 +27,12 @@ const (
 
 	// Polling interval as fallback
 	PollInterval = 3 * time.Second
+
+	// IdleTimeout is how long a session can go without activity before the
+	// card is cleared. It outlasts the longest single tool call (Claude Code
+	// caps a Bash command at 10 minutes), so a long build or test run keeps
+	// the card.
+	IdleTimeout = 15 * time.Minute
 )
 
 // modelPrice is a model's list price in dollars per million tokens. Cache
@@ -174,6 +180,9 @@ type SessionData struct {
 	TotalCost   float64
 	CostKnown   bool // false when a model in the session has no known price
 	StartTime   time.Time
+	// LastActivity is when the session's data last changed: Claude Code
+	// writes it on every prompt, tool call and response.
+	LastActivity time.Time
 }
 
 // Usage is the usage block of one API response, as Claude Code records it.
@@ -285,8 +294,7 @@ func main() {
 	}()
 
 	// Try initial read and show data source
-	if session := readSessionData(); session != nil {
-		updatePresence(session)
+	if session := refreshPresence(); session != nil {
 		fmt.Printf("✓ Found active session: %s (using %s)\n", session.ProjectName, currentSource)
 	} else {
 		fmt.Println("⏳ Waiting for Claude Code session...")
@@ -310,6 +318,10 @@ func readModuleData() *SessionData {
 
 func readPresenceFile(path string) *SessionData {
 	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	info, err := os.Stat(path)
 	if err != nil {
 		return nil
 	}
@@ -343,6 +355,8 @@ func readPresenceFile(path string) *SessionData {
 		TotalCost:   statusLine.Cost.TotalCostUSD,
 		CostKnown:   true, // Claude Code's own figure
 		StartTime:   sessionStartTime,
+
+		LastActivity: info.ModTime(),
 	}
 }
 
@@ -451,6 +465,10 @@ func parseJSONLSession(jsonlPath, _ string) *SessionData {
 		return nil
 	}
 	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return nil
+	}
 
 	type response struct {
 		model string
@@ -532,6 +550,8 @@ func parseJSONLSession(jsonlPath, _ string) *SessionData {
 		TotalCost:   totalCost,
 		CostKnown:   costKnown,
 		StartTime:   sessionStartTime,
+
+		LastActivity: info.ModTime(),
 	}
 }
 
@@ -597,6 +617,40 @@ func presenceText(session *SessionData) (details, state string) {
 	return details, state
 }
 
+// refreshPresence shows the current session on Discord, or empties the card
+// when there is none or it has gone idle. It returns the session shown.
+func refreshPresence() *SessionData {
+	session := readSessionData()
+	if session == nil || sessionIsIdle(session, time.Now()) {
+		clearPresence()
+		return nil
+	}
+	updatePresence(session)
+	return session
+}
+
+// sessionIsIdle decides when nobody is working in the session any more, so
+// the card should go: a session that crashed or was closed without its
+// SessionEnd hook, or one left open overnight.
+func sessionIsIdle(session *SessionData, now time.Time) bool {
+	if session.LastActivity.IsZero() {
+		return false // unknown: don't hide an otherwise valid session
+	}
+	return now.Sub(session.LastActivity) > IdleTimeout
+}
+
+func clearPresence() {
+	if lastPresence == "" {
+		return
+	}
+	if err := discordClient.ClearActivity(); err != nil && !errors.Is(err, discord.ErrNotConnected) {
+		fmt.Fprintf(os.Stderr, "Error clearing presence: %v\n", err)
+		return
+	}
+	// Cleared, or nothing to restore once Discord is back
+	lastPresence = ""
+}
+
 func updatePresence(session *SessionData) {
 	details, state := presenceText(session)
 
@@ -658,9 +712,7 @@ func watchForChanges() {
 			}
 			// Respond to module and statusline data file changes
 			if name := filepath.Base(event.Name); name == filepath.Base(moduleFilePath) || name == filepath.Base(dataFilePath) {
-				if session := readSessionData(); session != nil {
-					updatePresence(session)
-				}
+				refreshPresence()
 			}
 		case err, ok := <-watcher.Errors:
 			if !ok {
@@ -669,9 +721,7 @@ func watchForChanges() {
 			fmt.Fprintf(os.Stderr, "Watcher error: %v\n", err)
 		case <-ticker.C:
 			// Poll reads from either statusline or JSONL fallback
-			if session := readSessionData(); session != nil {
-				updatePresence(session)
-			}
+			refreshPresence()
 		}
 	}
 }
@@ -681,8 +731,6 @@ func pollForChanges() {
 	defer ticker.Stop()
 
 	for range ticker.C {
-		if session := readSessionData(); session != nil {
-			updatePresence(session)
-		}
+		refreshPresence()
 	}
 }

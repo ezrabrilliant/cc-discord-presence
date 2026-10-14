@@ -26,6 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Each response was counted once per content block, since Claude Code writes a line per block with the same usage
   - A model without a known price leaves the cost off the card instead of guessing
   - Claude Code's `<synthetic>` notices (API errors, interruptions) no longer replace the model and token count with "Claude" and 0
+- The card is cleared when there is no session to show, or the session has been idle for 15 minutes (a crashed session, a window left open); previously it kept showing the last session for as long as the daemon ran
 
 ## [1.0.6] - 2026-10-12
 

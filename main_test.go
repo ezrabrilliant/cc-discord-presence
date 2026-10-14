@@ -742,3 +742,104 @@ func TestReadPresenceFileCostIsKnown(t *testing.T) {
 		t.Errorf("readPresenceFile = %+v, want TotalCost 1.27 marked known", got)
 	}
 }
+
+func TestSessionDataCarriesLastActivity(t *testing.T) {
+	hourAgo := time.Now().Add(-time.Hour).Truncate(time.Second)
+
+	module := filepath.Join(t.TempDir(), "module.json")
+	os.WriteFile(module, []byte(`{"session_id":"s1","cwd":"/work/kadens"}`), 0644)
+	os.Chtimes(module, hourAgo, hourAgo)
+	if got := readPresenceFile(module); got == nil || !got.LastActivity.Equal(hourAgo) {
+		t.Errorf("readPresenceFile LastActivity = %v, want the file's mtime %v", got, hourAgo)
+	}
+
+	transcript := writeTranscript(t,
+		`{"type":"user","cwd":"/work/kadens"}`,
+		`{"type":"assistant","message":{"id":"m1","model":"claude-opus-5-5","usage":{"input_tokens":1}}}`)
+	os.Chtimes(transcript, hourAgo, hourAgo)
+	if got := parseJSONLSession(transcript, ""); got == nil || !got.LastActivity.Equal(hourAgo) {
+		t.Errorf("parseJSONLSession LastActivity = %v, want the file's mtime %v", got, hourAgo)
+	}
+}
+
+// useSessionFiles points the daemon at empty session data in a temp dir and a
+// Discord client that isn't connected, restoring both afterwards.
+func useSessionFiles(t *testing.T) (module string) {
+	t.Helper()
+	origData, origModule, origProjects := dataFilePath, moduleFilePath, projectsDir
+	origClient, origLast, origNudge := discordClient, lastPresence, nudgeShown
+	t.Cleanup(func() {
+		dataFilePath, moduleFilePath, projectsDir = origData, origModule, origProjects
+		discordClient, lastPresence, nudgeShown = origClient, origLast, origNudge
+	})
+	dir := t.TempDir()
+	dataFilePath = filepath.Join(dir, "discord-presence-data.json")
+	moduleFilePath = filepath.Join(dir, "discord-presence-module.json")
+	projectsDir = filepath.Join(dir, "projects")
+	discordClient = discord.NewClient("test")
+	nudgeShown = true
+	return moduleFilePath
+}
+
+func TestRefreshPresenceClearsCardWithoutSession(t *testing.T) {
+	useSessionFiles(t)
+	lastPresence = "Working on: kadens"
+
+	refreshPresence()
+
+	if lastPresence != "" {
+		t.Errorf("card not cleared with no session data (lastPresence %q)", lastPresence)
+	}
+}
+
+func TestRefreshPresenceShowsActiveSession(t *testing.T) {
+	module := useSessionFiles(t)
+	os.WriteFile(module, []byte(`{"session_id":"s1","cwd":"/work/kadens","model":{"display_name":"Opus 5.5"}}`), 0644)
+
+	refreshPresence()
+
+	if !strings.Contains(lastPresence, "kadens") {
+		t.Errorf("active session not shown (lastPresence %q)", lastPresence)
+	}
+}
+
+// A crashed session, or one left open overnight, must not keep the card.
+func TestRefreshPresenceClearsIdleSession(t *testing.T) {
+	module := useSessionFiles(t)
+	os.WriteFile(module, []byte(`{"session_id":"s1","cwd":"/work/kadens","model":{"display_name":"Opus 5.5"}}`), 0644)
+	longAgo := time.Now().Add(-IdleTimeout - time.Minute)
+	os.Chtimes(module, longAgo, longAgo)
+	lastPresence = "Working on: kadens"
+
+	refreshPresence()
+
+	if lastPresence != "" {
+		t.Errorf("card kept for a session idle longer than IdleTimeout (lastPresence %q)", lastPresence)
+	}
+}
+
+func TestSessionIsIdle(t *testing.T) {
+	now := time.Now()
+	tests := []struct {
+		name     string
+		lastSeen time.Duration // before now
+		want     bool
+	}{
+		{"just active", time.Minute, false},
+		{"inside the timeout", IdleTimeout - time.Minute, false},
+		{"past the timeout", IdleTimeout + time.Minute, true},
+		{"a day ago", 24 * time.Hour, true},
+	}
+	for _, tt := range tests {
+		session := &SessionData{LastActivity: now.Add(-tt.lastSeen)}
+		if got := sessionIsIdle(session, now); got != tt.want {
+			t.Errorf("%s: sessionIsIdle = %v, want %v", tt.name, got, tt.want)
+		}
+	}
+}
+
+func TestSessionIsIdleWithoutActivityTime(t *testing.T) {
+	if sessionIsIdle(&SessionData{}, time.Now()) {
+		t.Error("a session with no known activity time was hidden as idle")
+	}
+}
