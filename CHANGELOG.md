@@ -31,6 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Closing one Claude Code session no longer takes the card away while other sessions are still running but have no marker: those started before the plugin was installed, or by an older version of it
   - `stop.sh` keeps the daemon while another session's transcript changed in the last 15 minutes, unless that session ended
   - `stop.sh` records ended sessions in `~/.claude/discord-presence-ended/`, and the daemon no longer shows a closed session because its transcript is the freshest, unless it is resumed
+- Sessions starting at the same time (several terminals opened at once) no longer start a daemon each; only the last was in the pid file, so the others were never stopped. `start.sh` now checks and starts the daemon under a lock, broken after a minute if a killed script left it
 
 ## [1.0.6] - 2026-10-12
 

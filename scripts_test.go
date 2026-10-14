@@ -12,6 +12,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -68,11 +69,31 @@ func newScriptHomeAt(t *testing.T, dir string) *scriptHome {
 	h := &scriptHome{t: t, bash: findBash(t), dir: dir}
 	os.MkdirAll(h.claude("bin"), 0755)
 	t.Cleanup(func() {
-		if pid := h.pidFile(); pid != 0 && h.daemonRunning(pid) {
+		for _, pid := range h.daemonPids() {
 			killPid(pid)
 		}
 	})
 	return h
+}
+
+// daemonPids lists the processes running this home's daemon binary, whether
+// or not the pid file names them.
+func (h *scriptHome) daemonPids() []int {
+	bin := h.claude("bin", daemonBinaryName())
+	var out []byte
+	if runtime.GOOS == "windows" {
+		out, _ = exec.Command("powershell.exe", "-NoProfile", "-Command",
+			`Get-CimInstance Win32_Process -Filter "Name='`+daemonBinaryName()+`'" | Where-Object { $_.ExecutablePath -eq '`+bin+`' } | ForEach-Object { $_.ProcessId }`).Output()
+	} else {
+		out, _ = exec.Command("pgrep", "-f", bin).Output()
+	}
+	var pids []int
+	for _, field := range strings.Fields(string(out)) {
+		if pid, err := strconv.Atoi(field); err == nil {
+			pids = append(pids, pid)
+		}
+	}
+	return pids
 }
 
 func (h *scriptHome) claude(elem ...string) string {
@@ -96,6 +117,15 @@ func (h *scriptHome) installFakeDaemon() {
 // output read from a pipe until it closes.
 func (h *scriptHome) run(name, stdin string) string {
 	h.t.Helper()
+	out, err := h.exec(name, stdin)
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	return out
+}
+
+// exec is run for use from other goroutines, which can't call t.Fatal.
+func (h *scriptHome) exec(name, stdin string) (string, error) {
 	cmd := exec.Command(h.bash, filepath.Join("scripts", name))
 	cmd.Env = append(os.Environ(), "HOME="+h.dir, "CC_FAKE_DAEMON=1")
 	cmd.Stdin = strings.NewReader(stdin)
@@ -104,12 +134,12 @@ func (h *scriptHome) run(name, stdin string) string {
 	cmd.WaitDelay = 3 * time.Second
 	out, err := cmd.CombinedOutput()
 	if errors.Is(err, exec.ErrWaitDelay) {
-		h.t.Fatalf("%s exited but its output pipe stayed open (inherited by the daemon)\n%s", name, out)
+		return string(out), fmt.Errorf("%s exited but its output pipe stayed open (inherited by the daemon)\n%s", name, out)
 	}
 	if err != nil {
-		h.t.Fatalf("%s failed: %v\n%s", name, err, out)
+		return string(out), fmt.Errorf("%s failed: %v\n%s", name, err, out)
 	}
-	return string(out)
+	return string(out), nil
 }
 
 func (h *scriptHome) pidFile() int {
@@ -401,5 +431,54 @@ func TestStartScriptStartsDaemonWhenPidFileNamesAnotherProcess(t *testing.T) {
 
 	if got := h.pidFile(); got == pid || !h.daemonRunning(got) {
 		t.Errorf("start.sh did not start the daemon (pid file: %d, unrelated process: %d)\n%s", got, pid, out)
+	}
+}
+
+// Several terminals opened at once run SessionStart together. Each found no
+// daemon and started one; only the last went into the pid file, and the
+// others were never stopped.
+func TestStartScriptStartsOneDaemonForSessionsStartingTogether(t *testing.T) {
+	h := newScriptHome(t)
+	h.installFakeDaemon()
+
+	var wg sync.WaitGroup
+	errs := make(chan error, 3)
+	for _, id := range []string{"session-a", "session-b", "session-c"} {
+		wg.Add(1)
+		go func(id string) {
+			defer wg.Done()
+			if _, err := h.exec("start.sh", hookInput(t, id, "")); err != nil {
+				errs <- err
+			}
+		}(id)
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Fatal(err)
+	}
+
+	if pids := h.daemonPids(); len(pids) != 1 {
+		t.Errorf("%d daemons running for 3 sessions started together (%v), want 1", len(pids), pids)
+	}
+}
+
+// A start.sh killed while holding the lock (hook timeout) leaves it behind.
+func TestStartScriptBreaksLockLeftByKilledScript(t *testing.T) {
+	h := newScriptHome(t)
+	h.installFakeDaemon()
+	lock := h.claude("discord-presence.lock")
+	os.Mkdir(lock, 0755)
+	old := time.Now().Add(-2 * time.Minute)
+	os.Chtimes(lock, old, old)
+
+	start := time.Now()
+	h.run("start.sh", hookInput(t, "session-a", ""))
+
+	if took := time.Since(start); took > 5*time.Second {
+		t.Errorf("start.sh waited %s on a lock left two minutes ago", took.Round(time.Second))
+	}
+	if !h.daemonRunning(h.pidFile()) {
+		t.Error("daemon not started")
 	}
 }

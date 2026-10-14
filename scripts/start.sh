@@ -123,6 +123,24 @@ fi
 BINARY="$BIN_DIR/$BINARY_NAME"
 VERSION_FILE="$BINARY.version"
 
+# Sessions starting together (terminals opened at once) would each find no
+# daemon and start one, and only the last would go in the pid file. Checking
+# and starting is done by one script at a time: mkdir is atomic. A lock left
+# by a script that was killed (hook timeout) is broken after a minute.
+LOCK_DIR="$CLAUDE_DIR/discord-presence.lock"
+find "$LOCK_DIR" -maxdepth 0 -mmin +1 -exec rmdir {} \; 2>/dev/null || true
+LOCKED=false
+for _ in $(seq 90); do
+    if mkdir "$LOCK_DIR" 2>/dev/null; then
+        LOCKED=true
+        break
+    fi
+    sleep 0.1
+done
+if $LOCKED; then
+    trap 'rmdir "$LOCK_DIR" 2>/dev/null' EXIT
+fi
+
 # If the daemon is already running, just exit, unless it runs a binary from
 # another release: then stop it so the current one is downloaded and started.
 # (claude plugin update replaces this script, never the binary.)
