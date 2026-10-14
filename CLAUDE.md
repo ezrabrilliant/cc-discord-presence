@@ -68,6 +68,7 @@ cc-discord-presence/
 ### Session Tracking (Platform-specific)
 - **macOS/Linux**: PID-based tracking via files in `~/.claude/discord-presence-sessions/`
 - **Windows**: One marker per session id in `~/.claude/discord-presence-sessions/`, read from the hook input (PPID unreliable on Windows). SessionStart runs again after `/compact` for the same id, so markers can't drift the way a refcount did. A marker whose transcript hasn't changed for 12 hours is dropped (a crashed session never runs SessionEnd)
+- **Both**: Sessions started before the plugin was installed (or by an older version) have no marker. When the last marker goes, `stop.sh` still keeps the daemon while another transcript changed in the last 15 minutes and isn't recorded as ended in `~/.claude/discord-presence-ended/` (one file per session id, written by `stop.sh`). The JSONL fallback skips ended sessions unless their transcript changed after they ended (resumed)
 
 ### Model Pricing (Update when new models release)
 Located at top of `main.go` in `modelPrices`, keyed by display name ("Opus 4.5"), which `formatModelName` derives from any model ID (including Bedrock and Vertex AI forms). Prices come from https://platform.claude.com/docs/en/about-claude/pricing.

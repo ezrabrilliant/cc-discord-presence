@@ -219,6 +219,7 @@ var (
 	projectsDir      string
 	dataFilePath     string
 	moduleFilePath   string
+	endedDir         string // sessions stop.sh saw end, one empty file per session id
 	sessionStartTime = time.Now()
 	discordClient    *discord.Client
 	currentSource    string
@@ -243,6 +244,7 @@ func init() {
 	projectsDir = filepath.Join(claudeDir, "projects")
 	dataFilePath = filepath.Join(claudeDir, "discord-presence-data.json")
 	moduleFilePath = filepath.Join(claudeDir, "discord-presence-module.json")
+	endedDir = filepath.Join(claudeDir, "discord-presence-ended")
 }
 
 // setupLog sends all output to the file named by "--log <path>". The Windows
@@ -425,6 +427,16 @@ func findMostRecentJSONL() (string, string, error) {
 		parts := strings.SplitN(relPath, string(filepath.Separator), 2)
 		if len(parts) < 1 {
 			return nil
+		}
+
+		// Skip sessions stop.sh saw end, unless resumed since. The session id
+		// is the transcript's name, or the folder of its subagent transcripts.
+		if len(parts) == 2 {
+			sessionID, _, _ := strings.Cut(parts[1], string(filepath.Separator))
+			sessionID = strings.TrimSuffix(sessionID, ".jsonl")
+			if ended, err := os.Stat(filepath.Join(endedDir, sessionID)); err == nil && !info.ModTime().After(ended.ModTime()) {
+				return nil
+			}
 		}
 
 		// Decode the project path

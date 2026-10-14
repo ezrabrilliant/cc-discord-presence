@@ -28,6 +28,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Claude Code's `<synthetic>` notices (API errors, interruptions) no longer replace the model and token count with "Claude" and 0
 - The card is cleared when there is no session to show, or the session has been idle for 15 minutes (a crashed session, a window left open); previously it kept showing the last session for as long as the daemon ran
 - The elapsed timer counts from the start of the session, not of the daemon, which every session shares; from the JSONL fallback it counts from the first message after the last break of more than 15 minutes, so a resumed session doesn't show a day-long timer
+- Closing one Claude Code session no longer takes the card away while other sessions are still running but have no marker: those started before the plugin was installed, or by an older version of it
+  - `stop.sh` keeps the daemon while another session's transcript changed in the last 15 minutes, unless that session ended
+  - `stop.sh` records ended sessions in `~/.claude/discord-presence-ended/`, and the daemon no longer shows a closed session because its transcript is the freshest, unless it is resumed
 
 ## [1.0.6] - 2026-10-12
 

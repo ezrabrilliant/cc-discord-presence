@@ -7,7 +7,9 @@ CLAUDE_DIR="$HOME/.claude"
 PID_FILE="$CLAUDE_DIR/discord-presence.pid"
 SESSIONS_DIR="$CLAUDE_DIR/discord-presence-sessions"
 REFCOUNT_FILE="$CLAUDE_DIR/discord-presence.refcount" # replaced by SESSIONS_DIR on Windows
+ENDED_DIR="$CLAUDE_DIR/discord-presence-ended"
 STALE_MINUTES=720
+IDLE_MINUTES=15 # the daemon's IdleTimeout
 
 # Hook input: JSON from Claude Code on stdin; none when run by hand
 HOOK_INPUT=""
@@ -17,6 +19,17 @@ HOOK_INPUT=""
 hook_field() {
     printf '%s' "$HOOK_INPUT" | tr -d '\r\n' | sed -n 's/.*"'"$1"'"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p'
 }
+
+SESSION_ID=$(hook_field session_id | tr -cd 'A-Za-z0-9_-')
+
+# Record that this session ended: its transcript, fresh as it is, then
+# neither keeps the daemon running nor shows on the card (the daemon skips it
+# until it changes again, as on --resume). Records go after a day.
+if [[ -n "$SESSION_ID" ]]; then
+    mkdir -p "$ENDED_DIR"
+    touch "$ENDED_DIR/$SESSION_ID"
+    find "$ENDED_DIR" -type f -mmin +1440 -delete 2>/dev/null
+fi
 
 # Detect platform
 OS=$(uname -s | tr '[:upper:]' '[:lower:]')
@@ -72,6 +85,20 @@ prune_stale_sessions() {
     done
 }
 
+# Sessions started before the plugin was installed, or by an older version
+# of it, ran no SessionStart hook and have no marker. One of them is active
+# when its transcript changed in the last IDLE_MINUTES and it hasn't ended.
+untracked_session_active() {
+    local transcript id
+    while IFS= read -r transcript; do
+        id=$(basename "$transcript" .jsonl)
+        [[ "$id" == "$SESSION_ID" ]] && continue
+        [[ -f "$ENDED_DIR/$id" && ! "$transcript" -nt "$ENDED_DIR/$id" ]] && continue
+        return 0
+    done < <(find "$CLAUDE_DIR/projects" -mindepth 2 -maxdepth 2 -name '*.jsonl' -mmin -"$IDLE_MINUTES" 2>/dev/null)
+    return 1
+}
+
 count_sessions() {
     local marker count=0
     for marker in "$SESSIONS_DIR"/*; do
@@ -83,7 +110,6 @@ count_sessions() {
 # Session tracking: Windows uses one marker per session id, Unix uses PID files
 if $IS_WINDOWS; then
     rm -f "$REFCOUNT_FILE"
-    SESSION_ID=$(hook_field session_id | tr -cd 'A-Za-z0-9_-')
     rm -f "$SESSIONS_DIR/${SESSION_ID:-manual}"
     prune_stale_sessions
     ACTIVE_SESSIONS=$(count_sessions)
@@ -115,6 +141,12 @@ else
         exit 0
     fi
     rm -rf "$SESSIONS_DIR"
+fi
+
+# A hook (not a manual stop) leaves the daemon to sessions without a marker
+if [[ -n "$SESSION_ID" ]] && untracked_session_active; then
+    echo "Discord Rich Presence still in use by a session started before the plugin"
+    exit 0
 fi
 
 # Stop the daemon

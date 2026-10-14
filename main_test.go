@@ -891,3 +891,35 @@ func TestParseJSONLSessionRestartsTimerAfterIdleGap(t *testing.T) {
 		t.Errorf("StartTime = %v, want the resumed stretch at %v", got.StartTime, resumed)
 	}
 }
+
+// stop.sh records ended sessions; their transcripts are the freshest right
+// after they close, but the card should move on to a session still running.
+func TestFindMostRecentJSONLSkipsEndedSessions(t *testing.T) {
+	origProjects, origEnded := projectsDir, endedDir
+	defer func() { projectsDir, endedDir = origProjects, origEnded }()
+	dir := t.TempDir()
+	projectsDir, endedDir = filepath.Join(dir, "projects"), filepath.Join(dir, "ended")
+	os.MkdirAll(filepath.Join(projectsDir, "C--work-kadens"), 0755)
+	os.MkdirAll(endedDir, 0755)
+
+	write := func(path string, age time.Duration) {
+		os.WriteFile(path, []byte("{}\n"), 0644)
+		at := time.Now().Add(-age)
+		os.Chtimes(path, at, at)
+	}
+	running := filepath.Join(projectsDir, "C--work-kadens", "running.jsonl")
+	closed := filepath.Join(projectsDir, "C--work-kadens", "closed.jsonl")
+	write(running, 5*time.Minute)
+	write(closed, time.Minute)
+	write(filepath.Join(endedDir, "closed"), 0)
+
+	if got, _, _ := findMostRecentJSONL(); got != running {
+		t.Errorf("picked %s, want the session still running", filepath.Base(got))
+	}
+
+	// Resumed after it ended: its transcript changes again
+	write(closed, -time.Minute)
+	if got, _, _ := findMostRecentJSONL(); got != closed {
+		t.Errorf("picked %s, want the resumed session", filepath.Base(got))
+	}
+}

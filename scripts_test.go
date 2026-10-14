@@ -293,6 +293,68 @@ func TestScriptsIgnoreSessionThatEndedWithoutHook(t *testing.T) {
 	}
 }
 
+// transcript creates a session transcript under ~/.claude/projects, last
+// written age ago.
+func (h *scriptHome) transcript(sessionID string, age time.Duration) string {
+	h.t.Helper()
+	dir := h.claude("projects", "C--work-kadens")
+	os.MkdirAll(dir, 0755)
+	path := filepath.Join(dir, sessionID+".jsonl")
+	os.WriteFile(path, []byte("{}\n"), 0644)
+	at := time.Now().Add(-age)
+	os.Chtimes(path, at, at)
+	return path
+}
+
+// Sessions started before the plugin was installed (or by an older version
+// of it) ran no SessionStart hook and have no marker. Closing another session
+// must not take the card away from them.
+func TestStopScriptKeepsDaemonForActiveSessionWithoutMarker(t *testing.T) {
+	h := newScriptHome(t)
+	h.installFakeDaemon()
+	h.transcript("session-from-before-install", time.Minute)
+
+	h.run("start.sh", hookInput(t, "session-a", h.transcript("session-a", 0)))
+	pid := h.pidFile()
+	h.run("stop.sh", hookInput(t, "session-a", h.transcript("session-a", 0)))
+
+	if !h.daemonRunning(pid) {
+		t.Error("daemon stopped while another Claude Code session is active")
+	}
+}
+
+func TestStopScriptStopsDaemonWhenSessionWithoutMarkerIsIdle(t *testing.T) {
+	h := newScriptHome(t)
+	h.installFakeDaemon()
+	h.transcript("session-from-before-install", 20*time.Minute)
+
+	h.run("start.sh", hookInput(t, "session-a", h.transcript("session-a", 0)))
+	pid := h.pidFile()
+	h.run("stop.sh", hookInput(t, "session-a", h.transcript("session-a", 0)))
+
+	if !h.waitDaemonStopped(pid) {
+		t.Error("daemon kept running for a session idle for 20 minutes")
+	}
+}
+
+// A session that ended through its hook has a fresh transcript too; it must
+// not keep the daemon alive once the last session closes.
+func TestStopScriptStopsDaemonWhenEverySessionEnded(t *testing.T) {
+	h := newScriptHome(t)
+	h.installFakeDaemon()
+	a, b := h.transcript("session-a", 0), h.transcript("session-b", 0)
+
+	h.run("start.sh", hookInput(t, "session-a", a))
+	pid := h.pidFile()
+	h.run("start.sh", hookInput(t, "session-b", b))
+	h.run("stop.sh", hookInput(t, "session-b", b))
+	h.run("stop.sh", hookInput(t, "session-a", a))
+
+	if !h.waitDaemonStopped(pid) {
+		t.Error("daemon still running after every session ended")
+	}
+}
+
 // A pid file left behind by a daemon that is gone (reboot, Discord not
 // running) can name a pid the OS has since given to another program.
 func TestStopScriptSparesProcessThatReusedDaemonPid(t *testing.T) {
