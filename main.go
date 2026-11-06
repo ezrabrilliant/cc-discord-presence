@@ -181,7 +181,7 @@ func setupLog(args []string) error {
 				return err
 			}
 			os.Stdout, os.Stderr = f, f
-			return nil
+			return redirectStderr(f) // for a crash's panic message
 		}
 	}
 	return nil
@@ -189,7 +189,7 @@ func setupLog(args []string) error {
 
 func main() {
 	if err := setupLog(os.Args[1:]); err != nil {
-		fmt.Fprintf(os.Stderr, "Error opening log file: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Error setting up the log file: %v\n", err)
 	}
 
 	fmt.Println(`

@@ -21,11 +21,17 @@ import (
 // test binary doubles as the daemon: started with CC_FAKE_DAEMON=1 it only
 // stays alive, so no test talks to Discord.
 func TestMain(m *testing.M) {
-	if os.Getenv("CC_FAKE_DAEMON") == "1" {
+	switch os.Getenv("CC_FAKE_DAEMON") {
+	case "1":
 		setupLog(os.Args[1:])
 		fmt.Println("fake daemon running")
 		time.Sleep(2 * time.Minute)
 		os.Exit(0)
+	case "crash":
+		setupLog(os.Args[1:])
+		fmt.Println("to stdout")
+		fmt.Fprintln(os.Stderr, "to stderr")
+		panic("fake daemon crashed")
 	}
 	os.Exit(m.Run())
 }

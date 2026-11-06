@@ -1,8 +1,8 @@
 package main
 
 import (
-	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -525,24 +525,24 @@ func TestPresenceText(t *testing.T) {
 }
 
 // The Windows start script hands the log path to the daemon instead of
-// redirecting its output (see start.sh).
-func TestSetupLogSendsOutputToFile(t *testing.T) {
-	origOut, origErr := os.Stdout, os.Stderr
+// redirecting its output (see start.sh). A crash belongs there too: the Go
+// runtime writes a panic to the standard error handle, not to os.Stderr.
+func TestSetupLogSendsOutputAndPanicsToFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "discord-presence.log")
+	exe, _ := os.Executable()
+	cmd := exec.Command(exe, "--log", path)
+	cmd.Env = append(os.Environ(), "CC_FAKE_DAEMON=crash")
 
-	if err := setupLog([]string{"--log", path}); err != nil {
-		t.Fatalf("setupLog: %v", err)
+	console, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatal("the crashing daemon exited cleanly")
 	}
-	fmt.Println("to stdout")
-	fmt.Fprintln(os.Stderr, "to stderr")
-	if os.Stdout != origOut {
-		os.Stdout.Close()
-	}
-	os.Stdout, os.Stderr = origOut, origErr
 
 	data, _ := os.ReadFile(path)
-	if !strings.Contains(string(data), "to stdout") || !strings.Contains(string(data), "to stderr") {
-		t.Errorf("log file holds %q, want both stdout and stderr output", data)
+	for _, want := range []string{"to stdout", "to stderr", "panic: fake daemon crashed"} {
+		if !strings.Contains(string(data), want) {
+			t.Errorf("log file lacks %q\nlog: %q\nconsole: %q", want, data, console)
+		}
 	}
 }
 
