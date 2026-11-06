@@ -341,14 +341,20 @@ func (h *scriptHome) transcript(sessionID string, age time.Duration) string {
 
 const fakeClaudeCode = "cctestclaude"
 
-// startClaudeCode starts a stand-in for a running Claude Code session.
-func (h *scriptHome) startClaudeCode() {
+// startClaudeCode starts a stand-in for a running Claude Code session, or
+// with args, for another mode of the claude executable.
+func (h *scriptHome) startClaudeCode(args ...string) {
+	h.t.Helper()
+	h.startClaudeCodeIn(h.t.TempDir(), args...)
+}
+
+func (h *scriptHome) startClaudeCodeIn(dir string, args ...string) {
 	h.t.Helper()
 	name := fakeClaudeCode
 	if runtime.GOOS == "windows" {
 		name += ".exe"
 	}
-	startProcessAt(h.t, filepath.Join(h.t.TempDir(), name))
+	startProcessAt(h.t, filepath.Join(dir, name), args...)
 }
 
 // Sessions started before the plugin was installed (or by an older version
@@ -380,6 +386,42 @@ func TestStopScriptStopsDaemonWhenNoOtherClaudeCodeRuns(t *testing.T) {
 
 	if !h.waitDaemonStopped(pid) {
 		t.Error("daemon still running after the last Claude Code session ended")
+	}
+}
+
+// Claude in Chrome keeps claude --chrome-native-host running for as long as
+// Chrome is open; counted as a session, it kept the daemon running for good.
+func TestStopScriptStopsDaemonWhenOnlyHelpersRun(t *testing.T) {
+	h := newScriptHome(t)
+	h.installFakeDaemon()
+	h.startClaudeCode() // the session ending
+	h.startClaudeCode("--chrome-native-host")
+	h.startClaudeCode("mcp", "serve")
+
+	h.run("start.sh", hookInput(t, "session-a", ""))
+	pid := h.pidFile()
+	h.run("stop.sh", hookInput(t, "session-a", ""))
+
+	if !h.waitDaemonStopped(pid) {
+		t.Error("daemon still running after the last session ended, with only helpers left")
+	}
+}
+
+// The Claude desktop app's executable is also claude.exe, under
+// AnthropicClaude.
+func TestStopScriptStopsDaemonWhileDesktopAppRuns(t *testing.T) {
+	skipUnlessWindows(t)
+	h := newScriptHome(t)
+	h.installFakeDaemon()
+	h.startClaudeCode() // the session ending
+	h.startClaudeCodeIn(filepath.Join(t.TempDir(), "AnthropicClaude", "app-1.2.3"))
+
+	h.run("start.sh", hookInput(t, "session-a", ""))
+	pid := h.pidFile()
+	h.run("stop.sh", hookInput(t, "session-a", ""))
+
+	if !h.waitDaemonStopped(pid) {
+		t.Error("daemon still running after the last session ended, with only the desktop app left")
 	}
 }
 

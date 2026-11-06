@@ -32,6 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The elapsed timer counts from the start of the session, not of the daemon, which every session shares; from the JSONL fallback it counts from the first message after the last break of more than 15 minutes, so a resumed session doesn't show a day-long timer
 - Closing one Claude Code session no longer takes the card away while other sessions are still running but have no marker: those started before the plugin was installed, or by an older version of it
   - `stop.sh` keeps the daemon while another Claude Code process runs
+  - Processes that run no session don't count, here and for the daemon's own exit: Claude in Chrome's native host (`claude --chrome-native-host`, running as long as Chrome is open), `claude mcp serve`, and on Windows the Claude desktop app (also `claude.exe`)
   - `stop.sh` records ended sessions in `~/.claude/discord-presence-ended/`, and the daemon no longer shows a closed session because its transcript is the freshest, unless it is resumed
 - Sessions starting at the same time (several terminals opened at once) no longer start a daemon each; only the last was in the pid file, so the others were never stopped. `start.sh` now checks and starts the daemon under a lock, broken after a minute if a killed script left it
 

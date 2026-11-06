@@ -85,16 +85,42 @@ prune_stale_sessions() {
     done
 }
 
-# claude_code_count prints how many Claude Code processes run, the ending
-# session's own included (it runs its SessionEnd hook). On Windows this also
-# counts the desktop app, which shares the name; the daemon tells them apart
-# and exits by itself once Claude Code is gone.
-claude_code_count() {
+# claude_code_args prints the command line of each process named claude, one
+# per line. On Windows the Claude desktop app, a claude.exe under
+# AnthropicClaude, is left out; tasklist shows no command lines.
+claude_code_args() {
     if $IS_WINDOWS; then
-        tasklist //FI "IMAGENAME eq $CLAUDE_PROCESS.exe" //FO CSV //NH 2>/dev/null | grep -ci "^\"$CLAUDE_PROCESS.exe\""
+        powershell.exe -NoProfile -NonInteractive -Command "Get-CimInstance Win32_Process -Filter \"Name='$CLAUDE_PROCESS.exe'\" | Where-Object { \$_.ExecutablePath -notlike '*\\AnthropicClaude\\*' } | ForEach-Object { [string]\$_.CommandLine }" 2>/dev/null | tr -d '\r'
     else
-        pgrep -x "$CLAUDE_PROCESS" 2>/dev/null | wc -l
+        local pid
+        for pid in $(pgrep -x "$CLAUDE_PROCESS" 2>/dev/null); do
+            ps -p "$pid" -o args= 2>/dev/null
+        done
     fi
+}
+
+# is_helper ARGS succeeds for a claude process that is no session: the Claude
+# in Chrome native host, which runs for as long as Chrome is open, or
+# claude mcp serve. The daemon skips the same ones (claudeCodeHelper).
+is_helper() {
+    local arg
+    local -a args
+    read -ra args <<< "$(printf '%s' "$1" | tr -d '"')"
+    [[ "${args[1]} ${args[2]}" == "mcp serve" ]] && return 0
+    for arg in "${args[@]:1}"; do
+        [[ "$arg" == "--chrome-native-host" ]] && return 0
+    done
+    return 1
+}
+
+# claude_code_count prints how many Claude Code sessions run, the ending
+# session's own included (it runs its SessionEnd hook).
+claude_code_count() {
+    local args count=0
+    while IFS= read -r args || [[ -n "$args" ]]; do
+        is_helper "$args" || count=$((count + 1))
+    done < <(claude_code_args)
+    echo "$count"
 }
 
 count_sessions() {
