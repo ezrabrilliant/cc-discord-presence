@@ -34,7 +34,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `stop.sh` keeps the daemon while another Claude Code process runs
   - Processes that run no session don't count, here and for the daemon's own exit: Claude in Chrome's native host (`claude --chrome-native-host`, running as long as Chrome is open), `claude mcp serve`, and on Windows the Claude desktop app (also `claude.exe`)
   - `stop.sh` records ended sessions in `~/.claude/discord-presence-ended/`, and the daemon no longer shows a closed session because its transcript is the freshest, unless it is resumed
-- Sessions starting at the same time (several terminals opened at once) no longer start a daemon each; only the last was in the pid file, so the others were never stopped. `start.sh` now checks and starts the daemon under a lock, broken after a minute if a killed script left it
+- Sessions starting at the same time (several terminals opened at once) no longer start a daemon each; only the last was in the pid file, so the others were never stopped. `start.sh` now checks and starts the daemon under a lock
+  - A script that waits 8 seconds without getting it leaves the daemon to the one holding it, which may still be downloading the binary
+  - A lock older than the SessionStart hook's 10-second timeout was left by a script Claude Code killed, and is broken
 
 ## [1.0.6] - 2026-10-12
 

@@ -125,21 +125,40 @@ VERSION_FILE="$BINARY.version"
 
 # Sessions starting together (terminals opened at once) would each find no
 # daemon and start one, and only the last would go in the pid file. Checking
-# and starting is done by one script at a time: mkdir is atomic. A lock left
-# by a script that was killed (hook timeout) is broken after a minute.
+# and starting is done by one script at a time: mkdir is atomic.
 LOCK_DIR="$CLAUDE_DIR/discord-presence.lock"
-find "$LOCK_DIR" -maxdepth 0 -mmin +1 -exec rmdir {} \; 2>/dev/null || true
-LOCKED=false
-for _ in $(seq 90); do
-    if mkdir "$LOCK_DIR" 2>/dev/null; then
-        LOCKED=true
+# The SessionStart hook times out after 10 seconds (plugin.json): a lock
+# older than that was left by a script Claude Code killed, and waiting for
+# one ends before then (SECONDS counts from this script's start).
+LOCK_STALE_SECONDS=10
+LOCK_WAIT_SECONDS=8
+
+# lock_age prints how many seconds ago the lock was taken; nothing if it isn't
+lock_age() {
+    local taken
+    taken=$(stat -c %Y "$LOCK_DIR" 2>/dev/null || stat -f %m "$LOCK_DIR" 2>/dev/null) || return 0
+    echo $(( $(date +%s) - taken ))
+}
+
+LOCK_AGE=$(lock_age)
+if [[ -n "$LOCK_AGE" ]] && (( LOCK_AGE > LOCK_STALE_SECONDS )); then
+    rmdir "$LOCK_DIR" 2>/dev/null || true
+fi
+LOCKED=true
+until mkdir "$LOCK_DIR" 2>/dev/null; do
+    if (( SECONDS >= LOCK_WAIT_SECONDS )); then
+        LOCKED=false
         break
     fi
     sleep 0.1
 done
-if $LOCKED; then
-    trap 'rmdir "$LOCK_DIR" 2>/dev/null' EXIT
+if ! $LOCKED; then
+    # The script holding the lock is still starting the daemon (downloading
+    # it, say); starting one here as well would run two.
+    echo "Discord Rich Presence is being started by another session (sessions: $ACTIVE_SESSIONS)"
+    exit 0
 fi
+trap 'rmdir "$LOCK_DIR" 2>/dev/null' EXIT
 
 # If the daemon is already running, just exit, unless it runs a binary from
 # another release: then stop it so the current one is downloaded and started.

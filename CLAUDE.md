@@ -105,7 +105,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines. Key points:
 - Tokens shown are context size (the last request's input, cached tokens included), not a session total
 - Only pushes to Discord when the displayed text changes
 - A session whose data hasn't changed for `IdleTimeout` (15 minutes, longer than Claude Code's 10-minute cap on a Bash command) shows as "Idling in" while Claude Code runs, and is cleared when it doesn't; no session data clears the card
-- start.sh checks for and starts the daemon under a lock (`~/.claude/discord-presence.lock`, a directory), so sessions starting together don't each start one
+- start.sh checks for and starts the daemon under a lock (`~/.claude/discord-presence.lock`, a directory), so sessions starting together don't each start one. A script that waits 8 s without it exits and leaves the daemon to the holder; a lock older than the 10 s SessionStart hook timeout (plugin.json) is stale and broken. Change `LOCK_STALE_SECONDS` and `LOCK_WAIT_SECONDS` with that timeout
 - start.sh/start.ps1 re-download the binary when `<binary>.version` doesn't match `VERSION`, and stop a running daemon from another release first
 
 ## Releasing

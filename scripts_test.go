@@ -525,22 +525,46 @@ func TestStartScriptStartsOneDaemonForSessionsStartingTogether(t *testing.T) {
 	}
 }
 
-// A start.sh killed while holding the lock (hook timeout) leaves it behind.
+// A start.sh killed while holding the lock leaves it behind. Claude Code
+// kills the SessionStart hook after 10 seconds, so an older lock is stale.
 func TestStartScriptBreaksLockLeftByKilledScript(t *testing.T) {
 	h := newScriptHome(t)
 	h.installFakeDaemon()
 	lock := h.claude("discord-presence.lock")
 	os.Mkdir(lock, 0755)
-	old := time.Now().Add(-2 * time.Minute)
+	old := time.Now().Add(-20 * time.Second)
 	os.Chtimes(lock, old, old)
 
 	start := time.Now()
 	h.run("start.sh", hookInput(t, "session-a", ""))
 
 	if took := time.Since(start); took > 5*time.Second {
-		t.Errorf("start.sh waited %s on a lock left two minutes ago", took.Round(time.Second))
+		t.Errorf("start.sh waited %s on a lock left 20 seconds ago", took.Round(time.Second))
 	}
 	if !h.daemonRunning(h.pidFile()) {
 		t.Error("daemon not started")
+	}
+}
+
+// The script holding the lock can still be downloading the daemon when the
+// others stop waiting for it. Going on without the lock, each of them
+// downloaded and started one too.
+func TestStartScriptLeavesDaemonToLockHolder(t *testing.T) {
+	if testing.Short() {
+		t.Skip("waits out the lock (8 seconds)")
+	}
+	h := newScriptHome(t)
+	h.installFakeDaemon()
+	os.Mkdir(h.claude("discord-presence.lock"), 0755) // held by a script still downloading
+
+	start := time.Now()
+	out := h.run("start.sh", hookInput(t, "session-a", ""))
+
+	// Claude Code kills the hook after 10 seconds
+	if took := time.Since(start); took >= 10*time.Second {
+		t.Errorf("start.sh took %s, past the SessionStart hook's 10-second timeout", took.Round(100*time.Millisecond))
+	}
+	if pids := h.daemonPids(); len(pids) != 0 {
+		t.Errorf("start.sh started a daemon (%v) while another script held the lock\n%s", pids, out)
 	}
 }
