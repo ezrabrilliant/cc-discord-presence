@@ -39,41 +39,6 @@ const (
 	ExitGrace = 30 * time.Second
 )
 
-// modelPrice is a model's list price in dollars per million tokens. Cache
-// writes cost 1.25x the input price (5-minute cache) or 2x (1-hour cache);
-// CacheRead is the multiplier for cache hits.
-type modelPrice struct {
-	Input, Output         float64
-	CacheRead             float64
-	FastInput, FastOutput float64 // fast mode, where offered
-	LongInput, LongOutput float64 // prompts over 100k tokens, where pricing depends on length
-}
-
-// modelPrices is keyed by formatModelName. Update it when models are
-// released: https://platform.claude.com/docs/en/about-claude/pricing
-var modelPrices = map[string]modelPrice{
-	"Fable 5.1":  {Input: 10, Output: 50, CacheRead: 0.025},
-	"Mythos 5.1": {Input: 10, Output: 50, CacheRead: 0.025},
-	"Fable 5":    {Input: 10, Output: 50, CacheRead: 0.1},
-	"Mythos 5":   {Input: 10, Output: 50, CacheRead: 0.1},
-	"Opus 5.5":   {Input: 4, Output: 20, CacheRead: 0.05, FastInput: 8, FastOutput: 40},
-	"Opus 5":     {Input: 5, Output: 25, CacheRead: 0.1, FastInput: 10, FastOutput: 50},
-	"Opus 4.8":   {Input: 5, Output: 25, CacheRead: 0.1, FastInput: 10, FastOutput: 50},
-	"Opus 4.7":   {Input: 5, Output: 25, CacheRead: 0.1},
-	"Opus 4.6":   {Input: 5, Output: 25, CacheRead: 0.1},
-	"Opus 4.5":   {Input: 5, Output: 25, CacheRead: 0.1},
-	"Opus 4.1":   {Input: 15, Output: 75, CacheRead: 0.1},
-	"Opus 4":     {Input: 15, Output: 75, CacheRead: 0.1},
-	"Sonnet 5.5": {Input: 2, Output: 10, CacheRead: 0.05},
-	"Sonnet 5":   {Input: 2, Output: 10, CacheRead: 0.1},
-	"Sonnet 4.6": {Input: 3, Output: 15, CacheRead: 0.1},
-	"Sonnet 4.5": {Input: 3, Output: 15, CacheRead: 0.1},
-	"Sonnet 4":   {Input: 3, Output: 15, CacheRead: 0.1},
-	"Haiku 5.5":  {Input: 0.10, Output: 0.50, CacheRead: 0.1, LongInput: 0.50, LongOutput: 2.50},
-	"Haiku 4.5":  {Input: 1, Output: 5, CacheRead: 0.1},
-	"Haiku 3.5":  {Input: 0.80, Output: 4, CacheRead: 0.1},
-}
-
 var (
 	// claude-opus-4-5-20251101, claude-opus-5-5, claude-sonnet-4-20250514
 	modelIDPattern = regexp.MustCompile(`^claude-([a-z]+)-(\d+)(?:-(\d{1,2}))?(?:-\d{8})?$`)
@@ -103,43 +68,6 @@ func parseModelID(id string) (family string, major, minor int, ok bool) {
 	major, _ = strconv.Atoi(majorStr)
 	minor, _ = strconv.Atoi(minorStr)
 	return family, major, minor, true
-}
-
-// messageCost prices one API response from its usage. ok is false for a
-// model missing from modelPrices.
-func messageCost(modelID string, u Usage) (cost float64, ok bool) {
-	family, major, minor, ok := parseModelID(modelID)
-	if !ok {
-		return 0, false
-	}
-	p, ok := modelPrices[displayName(family, major, minor)]
-	if !ok {
-		return 0, false
-	}
-
-	input, output := p.Input, p.Output
-	if p.LongInput > 0 && u.InputTokens+u.CacheCreationInputTokens+u.CacheReadInputTokens > 100_000 {
-		input, output = p.LongInput, p.LongOutput
-	}
-	if u.Speed == "fast" && p.FastInput > 0 {
-		input, output = p.FastInput, p.FastOutput
-	}
-	// Usage recorded before 1-hour caching has no split: all 5-minute writes
-	write5m, write1h := u.CacheCreation.Ephemeral5m, u.CacheCreation.Ephemeral1h
-	if write5m+write1h == 0 {
-		write5m = u.CacheCreationInputTokens
-	}
-
-	cost = (float64(u.InputTokens)*input +
-		float64(write5m)*input*1.25 +
-		float64(write1h)*input*2 +
-		float64(u.CacheReadInputTokens)*input*p.CacheRead +
-		float64(u.OutputTokens)*output) / 1_000_000
-	// US-only inference costs 1.1x on Claude 4.6 and later
-	if u.InferenceGeo == "us" && (major > 4 || major == 4 && minor >= 6) {
-		cost *= 1.1
-	}
-	return cost, true
 }
 
 func displayName(family string, major, minor int) string {
@@ -182,7 +110,7 @@ type SessionData struct {
 	ModelName   string
 	TotalTokens int64
 	TotalCost   float64
-	CostKnown   bool // false when a model in the session has no known price
+	CostKnown   bool // Claude Code's own figure; the JSONL fallback has none
 	StartTime   time.Time
 	// LastActivity is when the session's data last changed: Claude Code
 	// writes it on every prompt, tool call and response.
@@ -192,19 +120,9 @@ type SessionData struct {
 
 // Usage is the usage block of one API response, as Claude Code records it.
 type Usage struct {
-	InputTokens              int64         `json:"input_tokens"`
-	OutputTokens             int64         `json:"output_tokens"`
-	CacheCreationInputTokens int64         `json:"cache_creation_input_tokens"`
-	CacheReadInputTokens     int64         `json:"cache_read_input_tokens"`
-	CacheCreation            CacheCreation `json:"cache_creation"`
-	Speed                    string        `json:"speed"`         // "fast" in fast mode
-	InferenceGeo             string        `json:"inference_geo"` // "us" for US-only inference
-}
-
-// CacheCreation splits cache writes by lifetime, which are priced differently.
-type CacheCreation struct {
-	Ephemeral5m int64 `json:"ephemeral_5m_input_tokens"`
-	Ephemeral1h int64 `json:"ephemeral_1h_input_tokens"`
+	InputTokens              int64 `json:"input_tokens"`
+	CacheCreationInputTokens int64 `json:"cache_creation_input_tokens"`
+	CacheReadInputTokens     int64 `json:"cache_read_input_tokens"`
 }
 
 // JSONLMessage represents a message entry in JSONL files
@@ -213,7 +131,6 @@ type JSONLMessage struct {
 	Timestamp string `json:"timestamp"`
 	Cwd       string `json:"cwd"`
 	Message   struct {
-		ID    string `json:"id"`
 		Model string `json:"model"`
 		Usage Usage  `json:"usage"`
 	} `json:"message"`
@@ -493,13 +410,9 @@ func parseJSONLSession(jsonlPath, _ string) *SessionData {
 		return nil
 	}
 
-	type response struct {
-		model string
-		usage Usage
-	}
 	var (
-		responses    []response         // in transcript order, one per message id
-		seen         = map[string]int{} // message id -> index in responses
+		model        string // of the latest response
+		usage        Usage
 		projectPath  string
 		stretchStart time.Time // first message of the current stretch of work
 		lastAt       time.Time
@@ -538,35 +451,16 @@ func parseJSONLSession(jsonlPath, _ string) *SessionData {
 		if msg.Type != "assistant" || msg.Message.Model == "" || strings.HasPrefix(msg.Message.Model, "<") {
 			continue
 		}
-		r := response{msg.Message.Model, msg.Message.Usage}
-		// Claude Code writes one line per content block of a response, each
-		// repeating its usage: count each message id once.
-		if i, ok := seen[msg.Message.ID]; ok && msg.Message.ID != "" {
-			responses[i] = r
-			continue
-		}
-		if msg.Message.ID != "" {
-			seen[msg.Message.ID] = len(responses)
-		}
-		responses = append(responses, r)
+		model, usage = msg.Message.Model, msg.Message.Usage
 	}
 
-	if len(responses) == 0 {
+	if model == "" {
 		return nil
 	}
 
-	// Price each response by its own model; the model can change mid-session
-	totalCost, costKnown := 0.0, true
-	for _, r := range responses {
-		cost, ok := messageCost(r.model, r.usage)
-		totalCost += cost
-		costKnown = costKnown && ok
-	}
-
-	last := responses[len(responses)-1]
 	// Context size: the latest request's input, cached tokens included
-	contextTokens := last.usage.InputTokens + last.usage.CacheCreationInputTokens + last.usage.CacheReadInputTokens
-	modelName := formatModelName(last.model)
+	contextTokens := usage.InputTokens + usage.CacheCreationInputTokens + usage.CacheReadInputTokens
+	modelName := formatModelName(model)
 
 	projectName := filepath.Base(projectPath)
 	if projectName == "" || projectName == "." {
@@ -579,14 +473,16 @@ func parseJSONLSession(jsonlPath, _ string) *SessionData {
 		startTime = stretchStart
 	}
 
+	// No cost: pricing the usage needs a table kept up to date with every
+	// model and price change, and the cost-state entries in transcripts are
+	// written only when a session exits. The hooks module and the statusline
+	// report Claude Code's own figure.
 	return &SessionData{
 		ProjectName: projectName,
 		ProjectPath: projectPath,
 		GitBranch:   getGitBranch(projectPath),
 		ModelName:   modelName,
 		TotalTokens: contextTokens,
-		TotalCost:   totalCost,
-		CostKnown:   costKnown,
 		StartTime:   startTime,
 
 		LastActivity: info.ModTime(),
@@ -624,8 +520,8 @@ func readSessionData() *SessionData {
 	setSource(sourceJSONL)
 	if !nudgeShown {
 		nudgeShown = true
-		fmt.Println("\n💡 Tip: For accurate token/cost data, update Claude Code (the plugin's hooks module")
-		fmt.Println("   needs a recent version) or configure the statusline wrapper.")
+		fmt.Println("\n💡 Tip: The card shows no cost from session files. For Claude Code's own cost, update")
+		fmt.Println("   Claude Code (the plugin's hooks module needs a recent version) or configure the statusline wrapper.")
 		fmt.Println("   See: https://github.com/tsanva/cc-discord-presence#statusline-setup")
 	}
 

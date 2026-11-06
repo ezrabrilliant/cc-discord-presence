@@ -57,7 +57,7 @@ cc-discord-presence/
 3. **JSONL Fallback** (`~/.claude/projects/<encoded-path>/*.jsonl`)
    - Zero configuration needed
    - Parses session transcript files
-   - Calculates cost based on model pricing table
+   - Shows no cost: pricing the usage needs a table kept up to date with every model and price change, and transcripts' `cost-state` entries are written only when a session exits
    - Finds most recently modified file (handles multiple instances)
 
 ### Plugin Hooks
@@ -72,13 +72,8 @@ cc-discord-presence/
 - **Daemon**: lists running Claude Code processes itself (`claudecode_*.go`) and exits `ExitGrace` (30 s) after the last one is gone, which covers windows closed without SessionEnd. It never exits that way on a system where it never found a Claude Code process
 - **Not sessions**: helpers `claudeCodeHelper` recognizes by their arguments (Claude in Chrome's `--chrome-native-host`, which runs as long as Chrome does; `claude mcp serve`) and, on Windows, the desktop app (also `claude.exe`, under `AnthropicClaude`). `stop.sh` (`is_helper`, PowerShell's `Win32_Process` on Windows) and the daemon skip the same ones; keep them in step
 
-### Model Pricing (Update when new models release)
-Located at top of `main.go` in `modelPrices`, keyed by display name ("Opus 4.5"), which `formatModelName` derives from any model ID (including Bedrock and Vertex AI forms). Prices come from https://platform.claude.com/docs/en/about-claude/pricing.
-
-- Only the JSONL fallback uses it; the hooks module and statusline report Claude Code's own cost
-- Each response is priced by its own model: input, 5-minute (1.25x) and 1-hour (2x) cache writes, cache reads (per-model multiplier), output, plus fast mode, US-only inference (1.1x on 4.6+) and Haiku 5.5's long-prompt prices
-- Claude Code writes one JSONL line per content block, each repeating the response's usage: count each `message.id` once
-- A model missing from the table leaves the cost off the card instead of guessing
+### Model Names
+The JSONL fallback shows the display name ("Opus 4.5") that `formatModelName` derives from any model ID, including Bedrock and Vertex AI forms, so new models need no change. The hooks module and statusline carry Claude Code's own display name and cost.
 
 ## Development Commands
 

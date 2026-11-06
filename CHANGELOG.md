@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- The JSONL fallback no longer shows a cost; the card shows the model and context size. It came from a price table of four models (any other was priced as Sonnet 4) that ignored cache writes and reads, so it was wrong for nearly every session. The hooks module and the statusline still show Claude Code's own figure
+
 ### Fixed
 - `start.sh` and `stop.sh`, which the plugin hooks run on every platform (Windows included, through Git Bash), trust the pid file only when that pid is a `cc-discord-presence` process, as `start.ps1` and `stop.ps1` do since 1.0.6
   - A pid reused after the daemon exited (reboot, Discord not running) made `start.sh` report the daemon as running without starting it, and `stop.sh` force-stop the unrelated program
@@ -20,12 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - The daemon exited when Discord wasn't running at startup, and never reconnected after losing the connection
   - It now retries every 3 seconds, notices a closed connection even while the card text stays the same, and sends the current activity again after reconnecting
 - The JSONL fallback reads past transcript lines longer than 1 MB (large tool results); it stopped at the first one, so the card showed the model and token count from before it
-- The JSONL fallback's model name and cost were wrong for most sessions
-  - Models were looked up by exact ID in a table of four (one with an ID that doesn't exist), so current models showed as "Opus" and were priced as Sonnet 4; names now come from the model ID ("Opus 5.5"), Bedrock and Vertex AI forms included
-  - Prices are the current list prices, including cache writes (5-minute and 1-hour) and reads, which were ignored, fast mode and US-only inference; each response is priced by its own model
-  - Each response was counted once per content block, since Claude Code writes a line per block with the same usage
-  - A model without a known price leaves the cost off the card instead of guessing
-  - Claude Code's `<synthetic>` notices (API errors, interruptions) no longer replace the model and token count with "Claude" and 0
+- The JSONL fallback's model name was wrong for most sessions: models were looked up by exact ID in a table of four (one with an ID that doesn't exist), so current models showed as "Opus". Names now come from the model ID ("Opus 5.5"), Bedrock and Vertex AI forms included
+- Claude Code's `<synthetic>` notices (API errors, interruptions) no longer replace the JSONL fallback's model and token count with "Claude" and 0
 - The card no longer shows a session that is over for as long as the daemon runs
   - A session without activity for 15 minutes shows as "Idling in" while Claude Code is open in some terminal, and is cleared when Claude Code isn't running (it crashed, or its window closed without the SessionEnd hook)
   - The daemon exits by itself 30 seconds after the last Claude Code process is gone

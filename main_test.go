@@ -619,50 +619,6 @@ func TestFormatModelName(t *testing.T) {
 	}
 }
 
-// Prices from https://platform.claude.com/docs/en/about-claude/pricing
-func TestMessageCost(t *testing.T) {
-	const M = 1_000_000
-	tests := []struct {
-		name    string
-		modelID string
-		usage   Usage
-		want    float64
-	}{
-		{"input and output", "claude-opus-4-5-20251101", Usage{InputTokens: M, OutputTokens: M / 10}, 5 + 2.5},
-		{"older Opus", "claude-opus-4-1-20250805", Usage{InputTokens: M}, 15},
-		{"date-suffixed Sonnet 4", "claude-sonnet-4-20250514", Usage{InputTokens: M / 2, OutputTokens: M / 20}, 1.5 + 0.75},
-		{"old naming", "claude-3-5-haiku-20241022", Usage{InputTokens: M}, 0.8},
-		{"output", "claude-opus-5-5", Usage{OutputTokens: M}, 20},
-		{"cache read at 0.05x", "claude-opus-5-5", Usage{CacheReadInputTokens: M}, 0.20},
-		{"cache read at 0.025x", "claude-fable-5-1", Usage{CacheReadInputTokens: M}, 0.25},
-		{"cache read at 0.1x", "claude-sonnet-4-6", Usage{CacheReadInputTokens: M}, 0.30},
-		{"1h cache write at 2x", "claude-opus-5-5", Usage{CacheCreationInputTokens: M, CacheCreation: CacheCreation{Ephemeral1h: M}}, 8},
-		{"5m cache write at 1.25x", "claude-opus-5-5", Usage{CacheCreationInputTokens: M, CacheCreation: CacheCreation{Ephemeral5m: M}}, 5},
-		{"cache write without TTL split is 5m", "claude-opus-4-5-20251101", Usage{CacheCreationInputTokens: M}, 6.25},
-		{"fast mode", "claude-opus-5-5", Usage{InputTokens: M, OutputTokens: M, Speed: "fast"}, 8 + 40},
-		{"fast mode cache read", "claude-opus-5", Usage{CacheReadInputTokens: M, Speed: "fast"}, 1},
-		{"US-only inference on 4.6+", "claude-opus-4-6", Usage{InputTokens: M, InferenceGeo: "us"}, 5.5},
-		{"US-only inference before 4.6", "claude-haiku-4-5-20251001", Usage{InputTokens: M, InferenceGeo: "us"}, 1},
-		{"Haiku 5.5 short prompt", "claude-haiku-5-5", Usage{InputTokens: 50_000}, 0.005},
-		{"Haiku 5.5 prompt over 100k", "claude-haiku-5-5", Usage{InputTokens: 50_000, CacheReadInputTokens: 100_000}, 0.025 + 0.005},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got, ok := messageCost(tt.modelID, tt.usage)
-			if !ok {
-				t.Fatalf("messageCost(%q) has no price", tt.modelID)
-			}
-			if diff := got - tt.want; diff > 1e-9 || diff < -1e-9 {
-				t.Errorf("messageCost(%q, %+v) = %v, want %v", tt.modelID, tt.usage, got, tt.want)
-			}
-		})
-	}
-
-	if _, ok := messageCost("claude-unknown-9", Usage{InputTokens: M}); ok {
-		t.Error("an unknown model got a price; the card should show no cost rather than a guess")
-	}
-}
-
 func writeTranscript(t *testing.T, lines ...string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "session.jsonl")
@@ -670,31 +626,6 @@ func writeTranscript(t *testing.T, lines ...string) string {
 		t.Fatal(err)
 	}
 	return path
-}
-
-// Claude Code writes one line per content block of a response (thinking,
-// text, each tool call), all carrying the same message id and usage.
-func TestParseJSONLSessionCountsEachMessageOnce(t *testing.T) {
-	block := `{"type":"assistant","message":{"id":"msg_1","model":"claude-opus-5-5","usage":{"input_tokens":2,"cache_creation_input_tokens":1000000,"cache_read_input_tokens":0,"output_tokens":1000000,"cache_creation":{"ephemeral_1h_input_tokens":1000000,"ephemeral_5m_input_tokens":0}}}}`
-	path := writeTranscript(t,
-		`{"type":"user","cwd":"/work/kadens"}`,
-		block, block, block,
-		`{"type":"assistant","message":{"id":"msg_2","model":"claude-opus-5-5","usage":{"input_tokens":3,"cache_creation_input_tokens":0,"cache_read_input_tokens":1000000,"output_tokens":0}}}`,
-	)
-
-	got := parseJSONLSession(path, "")
-
-	// msg_1: 1M 1h write ($8) + 1M output ($20); msg_2: 1M cache read ($0.20)
-	want := 8 + 20 + 0.20 + float64(2+3)*4/1_000_000
-	if diff := got.TotalCost - want; diff > 1e-9 || diff < -1e-9 || !got.CostKnown {
-		t.Errorf("TotalCost = %v (known %v), want %v", got.TotalCost, got.CostKnown, want)
-	}
-	if got.ModelName != "Opus 5.5" {
-		t.Errorf("ModelName = %q, want %q", got.ModelName, "Opus 5.5")
-	}
-	if got.TotalTokens != 1_000_003 {
-		t.Errorf("TotalTokens = %d, want the last request's context, 1000003", got.TotalTokens)
-	}
 }
 
 // Claude Code records API errors and interruptions as assistant messages
@@ -713,14 +644,21 @@ func TestParseJSONLSessionIgnoresSyntheticMessages(t *testing.T) {
 	}
 }
 
-func TestParseJSONLSessionUnknownModelHasNoCost(t *testing.T) {
+// A price table here went out of date with every model and price change:
+// the fallback shows model and context size only.
+func TestParseJSONLSessionShowsNoCost(t *testing.T) {
 	path := writeTranscript(t,
 		`{"type":"user","cwd":"/work/kadens"}`,
-		`{"type":"assistant","message":{"id":"msg_1","model":"claude-future-9","usage":{"input_tokens":1000}}}`,
+		`{"type":"assistant","message":{"id":"msg_1","model":"claude-sonnet-5-5","usage":{"input_tokens":3,"cache_read_input_tokens":1000000,"output_tokens":500}}}`,
 	)
 
-	if got := parseJSONLSession(path, ""); got.CostKnown {
-		t.Errorf("CostKnown = true with TotalCost %v for a model without a price", got.TotalCost)
+	got := parseJSONLSession(path, "")
+
+	if got.CostKnown {
+		t.Errorf("CostKnown = true (TotalCost %v), want no cost from a transcript", got.TotalCost)
+	}
+	if _, state := presenceText(got); state != "Sonnet 5.5 | 1.0M tokens" {
+		t.Errorf("state = %q, want model and context size only", state)
 	}
 }
 

@@ -24,7 +24,7 @@ Show your Claude Code session on Discord! Display your current project, git bran
 - **Git Branch** - Shows your current git branch
 - **Model Name** - Shows which Claude model you're using (Opus 4.5, Sonnet 4.5, Haiku 4.5)
 - **Context Size** - Tokens in Claude's context window right now (cached tokens included)
-- **Total Cost** - Real-time cost tracking for your session
+- **Total Cost** - Claude Code's own cost figure for your session (from the hooks module or the statusline)
 
 ## Installation
 
@@ -77,7 +77,7 @@ On Claude Code versions without hooks modules, you can configure the statusline 
 
 ### 3. JSONL Fallback
 
-As a last resort, the app parses Claude Code's session files from `~/.claude/projects/`. Cost is estimated from the model pricing table.
+As a last resort, the app parses Claude Code's session files from `~/.claude/projects/`. They don't record a cost, so the card shows the model and context size only.
 
 <a name="statusline-setup"></a>
 #### Statusline Setup (Optional)
@@ -126,7 +126,7 @@ cat ~/.claude/discord-presence.log
 You'll see one of:
 - `✓ Found active session: project-name (using hooks module)` - Best accuracy, no setup
 - `✓ Found active session: project-name (using statusline data)` - Same accuracy, for older Claude Code versions
-- `✓ Found active session: project-name (using JSONL fallback)` - Working, but cost is estimated; update Claude Code or set up the statusline
+- `✓ Found active session: project-name (using JSONL fallback)` - Working, but without cost; update Claude Code or set up the statusline
 
 ## Discord Presence Display
 
@@ -159,17 +159,6 @@ GOOS=linux GOARCH=amd64 go build -o bin/cc-discord-presence-linux-amd64 .
 GOOS=linux GOARCH=arm64 go build -o bin/cc-discord-presence-linux-arm64 .
 GOOS=windows GOARCH=amd64 go build -o bin/cc-discord-presence-windows-amd64.exe .
 ```
-
-## Token Pricing
-
-Cost is calculated using current Claude API pricing (Dec 2025):
-
-| Model | Input (per 1M tokens) | Output (per 1M tokens) |
-|-------|----------------------|------------------------|
-| Opus 4.5 | $15.00 | $75.00 |
-| Sonnet 4.5 | $3.00 | $15.00 |
-| Sonnet 4 | $3.00 | $15.00 |
-| Haiku 4.5 | $1.00 | $5.00 |
 
 ## Advanced: Custom Discord App
 
