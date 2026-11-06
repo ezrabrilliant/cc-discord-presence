@@ -64,6 +64,7 @@ cc-discord-presence/
 - **SessionStart**: Launches daemon via `scripts/start.sh`
 - **SessionEnd**: Stops daemon via `scripts/stop.sh`
 - Uses PID file at `~/.claude/discord-presence.pid`
+- `scripts/start.ps1`/`stop.ps1` aren't run by the hooks (Windows runs the `.sh` scripts through Git Bash): they start and stop the daemon by hand, for systems without Git Bash, and track no sessions
 
 ### Session Tracking (Platform-specific)
 - **macOS/Linux**: PID-based tracking via files in `~/.claude/discord-presence-sessions/`

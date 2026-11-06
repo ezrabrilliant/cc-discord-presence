@@ -1,26 +1,12 @@
-# Stop Discord Rich Presence daemon (Windows)
-# WARNING: Windows support is untested. Please report issues on GitHub.
+# Stop Discord Rich Presence daemon (Windows), by hand
+#
+# The plugin hooks don't run this script: they run stop.sh, through Git Bash
+# on Windows. This one stops the daemon whatever sessions are running; it
+# isn't needed when Claude Code quits, as the daemon then exits by itself.
 
 # Configuration
 $ClaudeDir = Join-Path $env:USERPROFILE ".claude"
 $PidFile = Join-Path $ClaudeDir "discord-presence.pid"
-$RefcountFile = Join-Path $ClaudeDir "discord-presence.refcount"
-
-# Session tracking: Use refcount (PID-based tracking is unreliable on Windows)
-$CurrentCount = 1
-if (Test-Path $RefcountFile) {
-    $CurrentCount = [int](Get-Content $RefcountFile -ErrorAction SilentlyContinue)
-}
-$ActiveSessions = [Math]::Max(0, $CurrentCount - 1)
-
-if ($ActiveSessions -gt 0) {
-    $ActiveSessions | Out-File -FilePath $RefcountFile -Encoding ASCII -NoNewline
-    Write-Host "Discord Rich Presence still in use by $ActiveSessions session(s)"
-    exit 0
-}
-
-# No more sessions, clean up refcount file
-Remove-Item $RefcountFile -Force -ErrorAction SilentlyContinue
 
 # Stop the daemon
 if (Test-Path $PidFile) {

@@ -1,5 +1,9 @@
-# Start Discord Rich Presence daemon (Windows)
-# WARNING: Windows support is untested. Please report issues on GitHub.
+# Start Discord Rich Presence daemon (Windows), by hand
+#
+# The plugin hooks don't run this script: they run start.sh, through Git
+# Bash on Windows, which also tracks sessions. Run this one where Git Bash
+# isn't available. It starts the daemon if it isn't running; the daemon
+# exits by itself once Claude Code is no longer running.
 
 $ErrorActionPreference = "Stop"
 
@@ -8,21 +12,12 @@ $ClaudeDir = Join-Path $env:USERPROFILE ".claude"
 $BinDir = Join-Path $ClaudeDir "bin"
 $PidFile = Join-Path $ClaudeDir "discord-presence.pid"
 $LogFile = Join-Path $ClaudeDir "discord-presence.log"
-$RefcountFile = Join-Path $ClaudeDir "discord-presence.refcount"
 $Repo = "tsanva/cc-discord-presence"
 $Version = "v1.0.6"
 
 # Ensure directories exist
 New-Item -ItemType Directory -Path $ClaudeDir -Force | Out-Null
 New-Item -ItemType Directory -Path $BinDir -Force | Out-Null
-
-# Session tracking: Use refcount (PID-based tracking is unreliable on Windows)
-$CurrentCount = 0
-if (Test-Path $RefcountFile) {
-    $CurrentCount = [int](Get-Content $RefcountFile -ErrorAction SilentlyContinue)
-}
-$ActiveSessions = $CurrentCount + 1
-$ActiveSessions | Out-File -FilePath $RefcountFile -Encoding ASCII -NoNewline
 
 $BinaryName = "cc-discord-presence-windows-amd64.exe"
 $Binary = Join-Path $BinDir $BinaryName
@@ -38,7 +33,7 @@ if (Test-Path $PidFile) {
         $Process = Get-Process -Id $OldPid -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -like "cc-discord-presence*" }
         if ($Process) {
             if ($InstalledVersion -eq $Version) {
-                Write-Host "Discord Rich Presence already running (PID: $OldPid, sessions: $ActiveSessions)"
+                Write-Host "Discord Rich Presence already running (PID: $OldPid)"
                 exit 0
             }
             Write-Host "Updating the running daemon to $Version..."
@@ -82,4 +77,4 @@ if (-not (Test-Path $Binary)) {
 $Process = Start-Process -FilePath $Binary -NoNewWindow -PassThru -RedirectStandardOutput $LogFile -RedirectStandardError "$LogFile.err"
 $Process.Id | Out-File -FilePath $PidFile -Encoding ASCII
 
-Write-Host "Discord Rich Presence started (PID: $($Process.Id), sessions: $ActiveSessions)"
+Write-Host "Discord Rich Presence started (PID: $($Process.Id))"

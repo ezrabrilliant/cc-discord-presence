@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - The JSONL fallback no longer shows a cost; the card shows the model and context size. It came from a price table of four models (any other was priced as Sonnet 4) that ignored cache writes and reads, so it was wrong for nearly every session. The hooks module and the statusline still show Claude Code's own figure
+- `start.ps1` and `stop.ps1`, which the plugin hooks don't run (they run `start.sh` and `stop.sh`, through Git Bash on Windows), are for starting and stopping the daemon by hand and keep no session count; the refcount they shared with the old `start.sh` drifted (see below). The daemon exits by itself once Claude Code is no longer running
 
 ### Fixed
 - `start.sh` and `stop.sh`, which the plugin hooks run on every platform (Windows included, through Git Bash), trust the pid file only when that pid is a `cc-discord-presence` process, as `start.ps1` and `stop.ps1` do since 1.0.6

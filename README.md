@@ -15,7 +15,7 @@ Show your Claude Code session on Discord! Display your current project, git bran
 
 > **Note**: macOS Intel and Linux should work but haven't been verified. Please [report problems](https://github.com/tsanva/cc-discord-presence/issues).
 >
-> **Windows users**: Requires [Git Bash](https://git-scm.com/downloads) (included with Git for Windows) for automatic plugin hooks. Alternatively, run the PowerShell scripts manually (`scripts/start.ps1` and `scripts/stop.ps1`). WSL won't work as Discord runs on the Windows host.
+> **Windows users**: Requires [Git Bash](https://git-scm.com/downloads) (included with Git for Windows) for automatic plugin hooks. Alternatively, run `scripts/start.ps1` by hand: the daemon exits by itself after Claude Code quits, and `scripts/stop.ps1` stops it sooner. WSL won't work as Discord runs on the Windows host.
 
 ## Features
 
